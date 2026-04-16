@@ -158,26 +158,38 @@ def _fit_one_scipy(alpha: np.ndarray, v_red: np.ndarray,
 
 def _fit_one_sbpy(alpha: np.ndarray, v_red: np.ndarray,
                   v_err: np.ndarray) -> dict:
-    """Fit using sbpy.photometry.HG1G2 (preferred when available)."""
+    """Fit using sbpy.photometry.HG1G2 (preferred when available).
+
+    sbpy 0.6 API:
+      - from_obs(obs, fitter, fields='mag', **kwargs)
+      - obs dict key is 'alpha' (not 'pha')
+      - fitter must be SLSQPLSQFitter to handle G1/G2 bounds
+      - weights=1/sigma passed as kwarg
+      - parameters accessed as m.H.value, m.G1.value, m.G2.value
+      - model call m(alpha_q) returns Quantity, use .value
+    """
     try:
         import astropy.units as u
         from sbpy.photometry import HG1G2
+        from astropy.modeling.fitting import SLSQPLSQFitter
 
-        pha = alpha * u.deg
-        mag = v_red * u.mag
-        mag_err = v_err * u.mag if v_err is not None else None
+        alpha_q = alpha * u.deg
+        mag_q   = v_red * u.mag
+        sigma   = v_err if v_err is not None else np.ones_like(alpha)
+        weights = 1.0 / sigma
 
+        fitter = SLSQPLSQFitter()
         m = HG1G2.from_obs(
-            {"pha": pha, "mag": mag},
-            uncertainty={"mag": mag_err} if mag_err is not None else None,
+            {"alpha": alpha_q, "mag": mag_q},
+            fitter,
+            weights=weights,
         )
 
-        H  = m.H.value
-        G1 = m.G1.value
-        G2 = m.G2.value
+        H  = float(m.H.value)
+        G1 = float(m.G1.value)
+        G2 = float(m.G2.value)
 
-        residuals = v_red - m(pha).value
-        sigma = v_err if v_err is not None else np.ones_like(alpha)
+        residuals = v_red - m(alpha_q).value
         chi2  = np.sum((residuals / sigma) ** 2)
         dof   = len(alpha) - 3
         chi2_red = chi2 / dof if dof > 0 else np.nan
@@ -186,7 +198,7 @@ def _fit_one_sbpy(alpha: np.ndarray, v_red: np.ndarray,
 
         return dict(
             H=H, G1=G1, G2=G2,
-            sigma_H=np.nan,  # sbpy does not always expose std errors
+            sigma_H=np.nan,  # SLSQPLSQFitter does not expose covariance
             sigma_G1=np.nan, sigma_G2=np.nan,
             chi2_reduced=chi2_red,
             fit_ok=True, flag_unphysical=flag_unphysical,
