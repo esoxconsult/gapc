@@ -50,8 +50,8 @@ WHERE g_mag               IS NOT NULL
 G_MAG_ERROR_MAX = 0.1    # drop obviously bad photometry early
 
 # ── Retry config ──────────────────────────────────────────────────────────────
-MAX_RETRIES    = 5
-RETRY_DELAY_S  = 120     # 2 min between retries (archive overload recovers slowly)
+MAX_RETRIES    = 40      # persistent: up to ~7 h of retrying
+RETRY_DELAY_S  = 600     # 10 min between retries
 
 
 def astropy_to_df(table: Table) -> pd.DataFrame:
