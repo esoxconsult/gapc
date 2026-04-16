@@ -1,0 +1,9 @@
+astroquery>=0.4.7
+astropy>=5.3
+pandas>=2.0
+numpy>=1.24
+scipy>=1.11
+pyarrow>=14.0
+sbpy>=0.4
+matplotlib>=3.7
+tqdm>=4.66

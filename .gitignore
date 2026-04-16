@@ -1,0 +1,35 @@
+# Data files (stay on VPS, never committed)
+data/
+*.parquet
+*.fits
+*.csv.gz
+
+# Logs
+logs/
+*.log
+
+# Plots (generated outputs)
+plots/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Venv
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
