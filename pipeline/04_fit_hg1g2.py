@@ -25,7 +25,7 @@ OUT_PATH = ROOT / "data" / "interim" / "hg1g2_fits.parquet"
 # ── Fit configuration ─────────────────────────────────────────────────────────
 MIN_OBS       = 5       # redundant guard (step 3 already filters)
 MIN_PHASE_RANGE = 5.0   # deg
-H_BOUNDS      = (5.0, 25.0)   # sanity bounds on absolute magnitude
+H_BOUNDS      = (0.0, 25.0)   # sanity bounds on absolute magnitude (0 covers Ceres/Vesta)
 G1_BOUNDS     = (0.0, 1.0)
 G2_BOUNDS     = (0.0, 1.0)
 G1G2_SUM_MAX  = 1.0     # physical constraint: G1 + G2 ≤ 1
@@ -183,6 +183,7 @@ def _fit_one_sbpy(alpha: np.ndarray, v_red: np.ndarray,
             {"alpha": alpha_q, "mag": mag_q},
             fitter,
             weights=weights,
+            iprint=0,   # suppress scipy optimizer stdout (400K lines for 100K fits)
         )
 
         H  = float(m.H.value)

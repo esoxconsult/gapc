@@ -46,10 +46,6 @@ def reduce_magnitude(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def compute_phase_range(group: pd.DataFrame) -> float:
-    return group["phase_angle"].max() - group["phase_angle"].min()
-
-
 def main():
     print("\n" + "=" * 55)
     print("  GAPC Step 3 — Quality Filtering")
@@ -60,17 +56,19 @@ def main():
           f"{df['number_mp'].nunique():,} asteroids")
 
     # ── Observation-level cuts ─────────────────────────────────────────────
-    cuts = {
-        "g_mag bright limit":  df["g_mag"] >= G_MAG_BRIGHT,
-        "g_mag faint limit":   df["g_mag"] <= G_MAG_FAINT,
-        "g_mag_error ≤ 0.05":  df["g_mag_error"] <= G_MAG_ERR_MAX,
-        "phase_angle range":   df["phase_angle"].between(PHASE_MIN, PHASE_MAX),
-        "r_helio ≤ 5.5 AU":   df["heliocentric_distance"] <= R_HELIO_MAX,
-        "r_geo ≤ 6.0 AU":     df["geocentric_distance"] <= R_GEO_MAX,
-    }
-    for label, mask in cuts.items():
+    # Each mask is computed from the current (already-filtered) df to avoid
+    # stale-index issues when reassigning df in a loop.
+    cuts = [
+        ("g_mag bright limit",  lambda d: d["g_mag"] >= G_MAG_BRIGHT),
+        ("g_mag faint limit",   lambda d: d["g_mag"] <= G_MAG_FAINT),
+        ("g_mag_error ≤ 0.05",  lambda d: d["g_mag_error"] <= G_MAG_ERR_MAX),
+        ("phase_angle range",   lambda d: d["phase_angle"].between(PHASE_MIN, PHASE_MAX)),
+        ("r_helio ≤ 5.5 AU",   lambda d: d["heliocentric_distance"] <= R_HELIO_MAX),
+        ("r_geo ≤ 6.0 AU",     lambda d: d["geocentric_distance"] <= R_GEO_MAX),
+    ]
+    for label, mask_fn in cuts:
         before = len(df)
-        df = df[mask]
+        df = df[mask_fn(df)]
         print(f"  After {label}: {len(df):,}  (dropped {before - len(df):,})")
 
     # ── Reduced magnitude ─────────────────────────────────────────────────
