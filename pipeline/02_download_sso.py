@@ -15,6 +15,7 @@ Column name notes (Gaia DR3 TAP, verified against Galluccio et al. 2022):
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 
 import pandas as pd
@@ -66,27 +67,34 @@ def astropy_to_df(table: Table) -> pd.DataFrame:
     return df
 
 
+def _run_tap_job(url: str) -> Table:
+    tap = TapPlus(url=url, verbose=False)
+    job = tap.launch_job_async(QUERY, verbose=False)
+    return job.get_results()
+
+
 def try_endpoint(name: str, url: str) -> Table:
-    """Try one TAP endpoint with retries; raises on all failures."""
+    """Try one TAP endpoint with retries and a hard per-attempt timeout."""
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             print(f"  [{name}] Attempt {attempt}/{MAX_RETRIES} — async TAP job …")
-            tap = TapPlus(url=url, verbose=False)
-            # Set HTTP-level socket timeout so a hung server doesn't block forever.
-            # This is the only reliable way — SIGALRM can't interrupt C-level socket I/O.
-            tap.connhandler._session.timeout = JOB_TIMEOUT_S
-            job = tap.launch_job_async(QUERY, verbose=False)
-            print(f"  [{name}] Job submitted, waiting for results …")
-            results = job.get_results()
+            # ThreadPoolExecutor.result(timeout) is the only reliable way to interrupt
+            # http.client blocking I/O that ignores SIGALRM and socket-level timeouts.
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_run_tap_job, url)
+                results = future.result(timeout=JOB_TIMEOUT_S)
             print(f"  [{name}] ✅ Got {len(results):,} rows")
             return results
+        except FuturesTimeout:
+            last_exc = TimeoutError(f"TAP job exceeded {JOB_TIMEOUT_S}s")
+            print(f"  [{name}] ⚠️  Attempt {attempt} timed out after {JOB_TIMEOUT_S}s")
         except Exception as e:
             last_exc = e
             print(f"  [{name}] ⚠️  Attempt {attempt} failed: {e}")
-            if attempt < MAX_RETRIES:
-                print(f"  [{name}] Waiting {RETRY_DELAY_S}s before retry …")
-                time.sleep(RETRY_DELAY_S)
+        if attempt < MAX_RETRIES:
+            print(f"  [{name}] Waiting {RETRY_DELAY_S}s before retry …")
+            time.sleep(RETRY_DELAY_S)
     raise RuntimeError(f"[{name}] All {MAX_RETRIES} attempts failed. Last: {last_exc}")
 
 
