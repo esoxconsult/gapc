@@ -14,7 +14,6 @@ Column name notes (Gaia DR3 TAP, verified against Galluccio et al. 2022):
   Downstream code sorts by number_mp if needed.
 """
 
-import signal
 import time
 from pathlib import Path
 
@@ -69,24 +68,17 @@ def astropy_to_df(table: Table) -> pd.DataFrame:
 
 def try_endpoint(name: str, url: str) -> Table:
     """Try one TAP endpoint with retries; raises on all failures."""
-    tap = TapPlus(url=url, verbose=False)
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             print(f"  [{name}] Attempt {attempt}/{MAX_RETRIES} — async TAP job …")
+            tap = TapPlus(url=url, verbose=False)
+            # Set HTTP-level socket timeout so a hung server doesn't block forever.
+            # This is the only reliable way — SIGALRM can't interrupt C-level socket I/O.
+            tap.connhandler._session.timeout = JOB_TIMEOUT_S
             job = tap.launch_job_async(QUERY, verbose=False)
-            print(f"  [{name}] Job submitted, waiting for results (timeout {JOB_TIMEOUT_S}s) …")
-
-            def _timeout_handler(signum, frame):
-                raise TimeoutError(f"TAP job did not return within {JOB_TIMEOUT_S}s")
-
-            signal.signal(signal.SIGALRM, _timeout_handler)
-            signal.alarm(JOB_TIMEOUT_S)
-            try:
-                results = job.get_results()
-            finally:
-                signal.alarm(0)
-
+            print(f"  [{name}] Job submitted, waiting for results …")
+            results = job.get_results()
             print(f"  [{name}] ✅ Got {len(results):,} rows")
             return results
         except Exception as e:
