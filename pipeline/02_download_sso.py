@@ -25,10 +25,10 @@ from astropy.table import Table
 ROOT = Path(__file__).resolve().parents[1]
 OUT_PATH = ROOT / "data" / "raw" / "sso_observations.parquet"
 
-# ── TAP endpoints (primary = ARI Heidelberg mirror, fallback = ESA) ───────────
+# ── TAP endpoints: (name, url, max_retries) ──────────────────────────────────
 TAP_ENDPOINTS = [
-    ("ARI Heidelberg", "https://gaia.ari.uni-heidelberg.de/tap"),
-    ("ESA Gaia",       "https://gea.esac.esa.int/tap-server/tap"),
+    ("ARI Heidelberg", "https://gaia.ari.uni-heidelberg.de/tap",  2),
+    ("ESA Gaia",       "https://gea.esac.esa.int/tap-server/tap", 5),
 ]
 
 # ── TAP Query ─────────────────────────────────────────────────────────────────
@@ -55,7 +55,6 @@ WHERE g_mag               IS NOT NULL
 G_MAG_ERROR_MAX = 0.1
 
 # ── Retry config ──────────────────────────────────────────────────────────────
-MAX_RETRIES    = 10      # per endpoint
 RETRY_DELAY_S  = 300     # 5 min between retries
 JOB_TIMEOUT_S  = 900     # 15 min hard timeout per TAP job attempt
 
@@ -73,12 +72,12 @@ def _run_tap_job(url: str) -> Table:
     return job.get_results()
 
 
-def try_endpoint(name: str, url: str) -> Table:
+def try_endpoint(name: str, url: str, max_retries: int) -> Table:
     """Try one TAP endpoint with retries and a hard per-attempt timeout."""
     last_exc = None
-    for attempt in range(1, MAX_RETRIES + 1):
+    for attempt in range(1, max_retries + 1):
         try:
-            print(f"  [{name}] Attempt {attempt}/{MAX_RETRIES} — async TAP job …")
+            print(f"  [{name}] Attempt {attempt}/{max_retries} — async TAP job …")
             # Must NOT use `with` executor — its __exit__ calls shutdown(wait=True)
             # which blocks until the thread finishes, defeating the timeout entirely.
             ex = ThreadPoolExecutor(max_workers=1)
@@ -97,17 +96,17 @@ def try_endpoint(name: str, url: str) -> Table:
         except Exception as e:
             last_exc = e
             print(f"  [{name}] ⚠️  Attempt {attempt} failed: {e}")
-        if attempt < MAX_RETRIES:
+        if attempt < max_retries:
             print(f"  [{name}] Waiting {RETRY_DELAY_S}s before retry …")
             time.sleep(RETRY_DELAY_S)
-    raise RuntimeError(f"[{name}] All {MAX_RETRIES} attempts failed. Last: {last_exc}")
+    raise RuntimeError(f"[{name}] All {max_retries} attempts failed. Last: {last_exc}")
 
 
 def launch_with_retry() -> Table:
     """Try each TAP endpoint in order; return first success."""
-    for name, url in TAP_ENDPOINTS:
+    for name, url, max_retries in TAP_ENDPOINTS:
         try:
-            return try_endpoint(name, url)
+            return try_endpoint(name, url, max_retries)
         except RuntimeError as e:
             print(f"\n  Switching endpoint: {e}\n")
     raise RuntimeError("All TAP endpoints exhausted.")
