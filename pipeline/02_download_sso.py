@@ -18,15 +18,19 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from astroquery.gaia import Gaia
+from astroquery.utils.tap.core import TapPlus
 from astropy.table import Table
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_PATH = ROOT / "data" / "raw" / "sso_observations.parquet"
 
+# ── TAP endpoints (primary = ARI Heidelberg mirror, fallback = ESA) ───────────
+TAP_ENDPOINTS = [
+    ("ARI Heidelberg", "https://gaia.ari.uni-heidelberg.de/tap"),
+    ("ESA Gaia",       "https://gea.esac.esa.int/tap-server/tap"),
+]
+
 # ── TAP Query ─────────────────────────────────────────────────────────────────
-# Minimal columns required for HG1G2 fitting.
-# ORDER BY omitted — reduces server load; step 04 groupby doesn't need sort.
 QUERY = """
 SELECT
     source_id,
@@ -47,41 +51,49 @@ WHERE g_mag               IS NOT NULL
 """
 
 # ── Quality threshold applied at download ─────────────────────────────────────
-G_MAG_ERROR_MAX = 0.1    # drop obviously bad photometry early
+G_MAG_ERROR_MAX = 0.1
 
 # ── Retry config ──────────────────────────────────────────────────────────────
-MAX_RETRIES    = 40      # persistent: up to ~7 h of retrying
-RETRY_DELAY_S  = 600     # 10 min between retries
+MAX_RETRIES   = 10      # per endpoint
+RETRY_DELAY_S = 300     # 5 min between retries
 
 
 def astropy_to_df(table: Table) -> pd.DataFrame:
-    """Convert astropy Table to pandas DataFrame, handling masked arrays."""
     df = table.to_pandas()
     for col in df.select_dtypes(include="object").columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
 
-def launch_with_retry() -> Table:
-    """Launch async TAP job with retries on server errors."""
-    Gaia.ROW_LIMIT = -1
+def try_endpoint(name: str, url: str) -> Table:
+    """Try one TAP endpoint with retries; raises on all failures."""
+    tap = TapPlus(url=url, verbose=False)
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            print(f"  Attempt {attempt}/{MAX_RETRIES} — launching async TAP job …")
-            job = Gaia.launch_job_async(QUERY, verbose=False)
-            print("  Job submitted, waiting for results …")
+            print(f"  [{name}] Attempt {attempt}/{MAX_RETRIES} — async TAP job …")
+            job = tap.launch_job_async(QUERY, verbose=False)
+            print(f"  [{name}] Job submitted, waiting for results …")
             results = job.get_results()
+            print(f"  [{name}] ✅ Got {len(results):,} rows")
             return results
         except Exception as e:
             last_exc = e
-            print(f"  ⚠️  Attempt {attempt} failed: {e}")
+            print(f"  [{name}] ⚠️  Attempt {attempt} failed: {e}")
             if attempt < MAX_RETRIES:
-                print(f"  Waiting {RETRY_DELAY_S}s before retry …")
+                print(f"  [{name}] Waiting {RETRY_DELAY_S}s before retry …")
                 time.sleep(RETRY_DELAY_S)
-    raise RuntimeError(
-        f"All {MAX_RETRIES} TAP attempts failed. Last error: {last_exc}"
-    )
+    raise RuntimeError(f"[{name}] All {MAX_RETRIES} attempts failed. Last: {last_exc}")
+
+
+def launch_with_retry() -> Table:
+    """Try each TAP endpoint in order; return first success."""
+    for name, url in TAP_ENDPOINTS:
+        try:
+            return try_endpoint(name, url)
+        except RuntimeError as e:
+            print(f"\n  Switching endpoint: {e}\n")
+    raise RuntimeError("All TAP endpoints exhausted.")
 
 
 def main():
