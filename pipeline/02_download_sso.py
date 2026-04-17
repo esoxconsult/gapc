@@ -79,15 +79,20 @@ def try_endpoint(name: str, url: str) -> Table:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             print(f"  [{name}] Attempt {attempt}/{MAX_RETRIES} — async TAP job …")
-            # ThreadPoolExecutor.result(timeout) is the only reliable way to interrupt
-            # http.client blocking I/O that ignores SIGALRM and socket-level timeouts.
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(_run_tap_job, url)
+            # Must NOT use `with` executor — its __exit__ calls shutdown(wait=True)
+            # which blocks until the thread finishes, defeating the timeout entirely.
+            ex = ThreadPoolExecutor(max_workers=1)
+            future = ex.submit(_run_tap_job, url)
+            try:
                 results = future.result(timeout=JOB_TIMEOUT_S)
+            except FuturesTimeout:
+                ex.shutdown(wait=False)
+                raise TimeoutError(f"TAP job exceeded {JOB_TIMEOUT_S}s")
+            ex.shutdown(wait=False)
             print(f"  [{name}] ✅ Got {len(results):,} rows")
             return results
-        except FuturesTimeout:
-            last_exc = TimeoutError(f"TAP job exceeded {JOB_TIMEOUT_S}s")
+        except TimeoutError as e:
+            last_exc = e
             print(f"  [{name}] ⚠️  Attempt {attempt} timed out after {JOB_TIMEOUT_S}s")
         except Exception as e:
             last_exc = e
