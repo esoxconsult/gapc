@@ -161,7 +161,7 @@ def main():
             print(f"  Using NEOWISE H column: '{h_col}'")
         else:
             d_col  = next((c for c in neo.columns
-                           if c.lower() in ["d", "diam", "diameter", "d_km"]), None)
+                           if c.lower() in ["d", "diam", "diameter", "d_km", "diameter_km"]), None)
             pv_col = next((c for c in neo.columns
                            if c.lower() in ["p_v", "pv", "albedo", "pv_mean",
                                             "p_v_mean", "geometric_albedo"]), None)
