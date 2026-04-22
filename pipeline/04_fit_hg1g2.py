@@ -23,14 +23,19 @@ IN_PATH  = ROOT / "data" / "interim" / "sso_filtered.parquet"
 OUT_PATH = ROOT / "data" / "interim" / "hg1g2_fits.parquet"
 
 # ── Fit configuration ─────────────────────────────────────────────────────────
-MIN_OBS       = 5       # redundant guard (step 3 already filters)
-MIN_PHASE_RANGE = 5.0   # deg
-H_BOUNDS      = (0.0, 25.0)   # sanity bounds on absolute magnitude (0 covers Ceres/Vesta)
-G1_BOUNDS     = (0.0, 1.0)
-G2_BOUNDS     = (0.0, 1.0)
-G1G2_SUM_MAX  = 1.0     # physical constraint: G1 + G2 ≤ 1
+MIN_OBS         = 5       # redundant guard (step 3 already filters)
+MIN_PHASE_RANGE = 5.0     # deg
+HG_PHASE_MAX    = 15.0    # deg — use HG instead of HG1G2 below this phase range
+H_BOUNDS        = (0.0, 25.0)
+G1_BOUNDS       = (0.0, 1.0)
+G2_BOUNDS       = (0.0, 1.0)
+G_BOUNDS        = (0.0, 1.0)   # HG slope parameter bounds
+G1G2_SUM_MAX    = 1.0
 
-N_WORKERS     = 4       # parallel workers (set to 1 to debug)
+SIGMA_CLIP_NSIGMA = 5.0   # clip residuals > N × MAD after initial fit
+SIGMA_CLIP_FLOOR  = 0.5   # minimum clip threshold [mag] (preserves lightcurve scatter)
+
+N_WORKERS     = 4
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -86,14 +91,93 @@ def hg1g2_model(alpha_deg: np.ndarray, H: float,
                 G1: float, G2: float) -> np.ndarray:
     """Reduced magnitude as function of phase angle."""
     denom = G1 * phi1(alpha_deg) + G2 * phi2(alpha_deg)
-    # guard against log(0)
     denom = np.where(denom > 0, denom, 1e-10)
     return H - 2.5 * np.log10(denom)
+
+
+def hg_model(alpha_deg: np.ndarray, H: float, G: float) -> np.ndarray:
+    """Bowell et al. 1989 HG phase function (2-parameter)."""
+    a = np.deg2rad(alpha_deg)
+    tanHalf = np.tan(a / 2.0)
+    phi1_hg = np.exp(-3.332 * tanHalf ** 0.631)
+    phi2_hg = np.exp(-1.862 * tanHalf ** 1.218)
+    denom = (1.0 - G) * phi1_hg + G * phi2_hg
+    denom = np.where(denom > 0, denom, 1e-10)
+    return H - 2.5 * np.log10(denom)
+
+
+def sigma_clip_mask(alpha: np.ndarray, v_red: np.ndarray,
+                    v_err: np.ndarray, model_fn, popt) -> np.ndarray:
+    """
+    Return boolean mask of observations to KEEP after one sigma-clipping pass.
+    Clips at max(SIGMA_CLIP_FLOOR, SIGMA_CLIP_NSIGMA × MAD) of residuals.
+    """
+    residuals = v_red - model_fn(alpha, *popt)
+    mad = np.median(np.abs(residuals - np.median(residuals)))
+    threshold = max(SIGMA_CLIP_FLOOR, SIGMA_CLIP_NSIGMA * mad)
+    return np.abs(residuals) <= threshold
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Fitting
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _fit_one_hg_scipy(alpha: np.ndarray, v_red: np.ndarray,
+                      v_err: np.ndarray) -> dict:
+    """Fit 2-parameter HG (Bowell 1989) via scipy; used for narrow phase coverage."""
+    from scipy.optimize import curve_fit
+
+    sigma = v_err if v_err is not None else np.ones_like(alpha)
+
+    small_phase_mask = alpha < 10
+    H_init = (v_red[small_phase_mask].min()
+               if small_phase_mask.sum() > 0 else v_red.min())
+    p0 = [H_init, 0.15]
+    bounds = ([H_BOUNDS[0], G_BOUNDS[0]], [H_BOUNDS[1], G_BOUNDS[1]])
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            popt, pcov = curve_fit(
+                hg_model, alpha, v_red,
+                p0=p0, sigma=sigma, absolute_sigma=True,
+                bounds=bounds, maxfev=5000,
+            )
+
+        keep = sigma_clip_mask(alpha, v_red, sigma, hg_model, popt)
+        if keep.sum() >= 5 and keep.sum() < len(alpha):
+            popt, pcov = curve_fit(
+                hg_model, alpha[keep], v_red[keep],
+                p0=popt, sigma=sigma[keep], absolute_sigma=True,
+                bounds=bounds, maxfev=5000,
+            )
+
+        H, G = popt
+        perr = np.sqrt(np.diag(pcov))
+        sigma_H, sigma_G = perr
+
+        residuals = v_red - hg_model(alpha, H, G)
+        chi2 = np.sum((residuals / sigma) ** 2)
+        dof = len(alpha) - 2
+        chi2_red = chi2 / dof if dof > 0 else np.nan
+
+        return dict(
+            H=H, G1=np.nan, G2=np.nan, G=G,
+            sigma_H=sigma_H, sigma_G1=np.nan, sigma_G2=np.nan, sigma_G=sigma_G,
+            chi2_reduced=chi2_red,
+            fit_ok=True, flag_unphysical=0,
+            fit_method="hg_scipy",
+            n_clipped=int((~keep).sum()),
+        )
+    except Exception:
+        return dict(
+            H=np.nan, G1=np.nan, G2=np.nan, G=np.nan,
+            sigma_H=np.nan, sigma_G1=np.nan, sigma_G2=np.nan, sigma_G=np.nan,
+            chi2_reduced=np.nan,
+            fit_ok=False, flag_unphysical=0,
+            fit_method="hg_scipy",
+            n_clipped=0,
+        )
 
 def _fit_one_scipy(alpha: np.ndarray, v_red: np.ndarray,
                    v_err: np.ndarray) -> dict:
@@ -105,8 +189,6 @@ def _fit_one_scipy(alpha: np.ndarray, v_red: np.ndarray,
 
     sigma = v_err if v_err is not None else np.ones_like(alpha)
 
-    # Initial guess: H from median v_reduced at small phase, G1=0.68, G2=0.18
-    # (median S-type values per Oszkiewicz et al. 2012)
     small_phase_mask = alpha < 10
     H_init = (v_red[small_phase_mask].min()
                if small_phase_mask.sum() > 0 else v_red.min())
@@ -125,34 +207,44 @@ def _fit_one_scipy(alpha: np.ndarray, v_red: np.ndarray,
                 p0=p0, sigma=sigma, absolute_sigma=True,
                 bounds=bounds, maxfev=5000,
             )
+
+        # Sigma-clipping: one pass, re-fit on survivors
+        keep = sigma_clip_mask(alpha, v_red, sigma, hg1g2_model, popt)
+        if keep.sum() >= 5 and keep.sum() < len(alpha):
+            popt, pcov = curve_fit(
+                hg1g2_model, alpha[keep], v_red[keep],
+                p0=popt, sigma=sigma[keep], absolute_sigma=True,
+                bounds=bounds, maxfev=5000,
+            )
+
         H, G1, G2 = popt
         perr = np.sqrt(np.diag(pcov))
         sigma_H, sigma_G1, sigma_G2 = perr
 
-        # chi² reduced
         residuals = v_red - hg1g2_model(alpha, H, G1, G2)
         chi2 = np.sum((residuals / sigma) ** 2)
         dof = len(alpha) - 3
         chi2_red = chi2 / dof if dof > 0 else np.nan
 
-        # Physical constraint flag
         flag_unphysical = int(G1 + G2 > G1G2_SUM_MAX)
 
         return dict(
-            H=H, G1=G1, G2=G2,
-            sigma_H=sigma_H, sigma_G1=sigma_G1, sigma_G2=sigma_G2,
+            H=H, G1=G1, G2=G2, G=np.nan,
+            sigma_H=sigma_H, sigma_G1=sigma_G1, sigma_G2=sigma_G2, sigma_G=np.nan,
             chi2_reduced=chi2_red,
             fit_ok=True, flag_unphysical=flag_unphysical,
             fit_method="scipy",
+            n_clipped=int((~keep).sum()),
         )
 
-    except Exception as e:
+    except Exception:
         return dict(
-            H=np.nan, G1=np.nan, G2=np.nan,
-            sigma_H=np.nan, sigma_G1=np.nan, sigma_G2=np.nan,
+            H=np.nan, G1=np.nan, G2=np.nan, G=np.nan,
+            sigma_H=np.nan, sigma_G1=np.nan, sigma_G2=np.nan, sigma_G=np.nan,
             chi2_reduced=np.nan,
             fit_ok=False, flag_unphysical=0,
             fit_method="scipy",
+            n_clipped=0,
         )
 
 
@@ -172,6 +264,7 @@ def _fit_one_sbpy(alpha: np.ndarray, v_red: np.ndarray,
         import astropy.units as u
         from sbpy.photometry import HG1G2
         from astropy.modeling.fitting import SLSQPLSQFitter
+        from scipy.optimize import curve_fit
 
         alpha_q = alpha * u.deg
         mag_q   = v_red * u.mag
@@ -190,20 +283,56 @@ def _fit_one_sbpy(alpha: np.ndarray, v_red: np.ndarray,
         G1 = float(m.G1.value)
         G2 = float(m.G2.value)
 
-        residuals = v_red - m(alpha_q).value
-        chi2  = np.sum((residuals / sigma) ** 2)
-        dof   = len(alpha) - 3
-        chi2_red = chi2 / dof if dof > 0 else np.nan
+        # Sigma-clipping: one pass using sbpy solution, re-fit with scipy
+        keep = sigma_clip_mask(alpha, v_red, sigma, hg1g2_model, [H, G1, G2])
+        n_clipped = int((~keep).sum())
 
+        bounds = (
+            [H_BOUNDS[0], G1_BOUNDS[0], G2_BOUNDS[0]],
+            [H_BOUNDS[1], G1_BOUNDS[1], G2_BOUNDS[1]],
+        )
+        sigma_H = sigma_G1 = sigma_G2 = np.nan
+
+        if keep.sum() >= 5 and n_clipped > 0:
+            # Clipped points found — re-fit survivors with scipy (gives pcov too)
+            try:
+                popt, pcov = curve_fit(
+                    hg1g2_model, alpha[keep], v_red[keep],
+                    p0=[H, G1, G2], sigma=sigma[keep], absolute_sigma=True,
+                    bounds=bounds, maxfev=5000,
+                )
+                H, G1, G2 = popt
+                sigma_H, sigma_G1, sigma_G2 = np.sqrt(np.diag(pcov))
+            except Exception:
+                pass
+        else:
+            # No clipping; recover pcov from scipy at the sbpy solution
+            try:
+                _, pcov = curve_fit(
+                    hg1g2_model, alpha, v_red,
+                    p0=[H, G1, G2], sigma=sigma, absolute_sigma=True,
+                    bounds=bounds, maxfev=200,
+                )
+                sigma_H, sigma_G1, sigma_G2 = np.sqrt(np.diag(pcov))
+            except Exception:
+                pass  # keep NaN if at a bound or pcov is singular
+
+        alpha_fit = alpha[keep] if n_clipped > 0 else alpha
+        v_fit     = v_red[keep] if n_clipped > 0 else v_red
+        sig_fit   = sigma[keep] if n_clipped > 0 else sigma
+
+        residuals = v_fit - hg1g2_model(alpha_fit, H, G1, G2)
+        chi2_red  = (np.sum((residuals / sig_fit) ** 2) / (len(alpha_fit) - 3)
+                     if len(alpha_fit) > 3 else np.nan)
         flag_unphysical = int(G1 + G2 > G1G2_SUM_MAX)
 
         return dict(
-            H=H, G1=G1, G2=G2,
-            sigma_H=np.nan,  # SLSQPLSQFitter does not expose covariance
-            sigma_G1=np.nan, sigma_G2=np.nan,
+            H=H, G1=G1, G2=G2, G=np.nan,
+            sigma_H=sigma_H, sigma_G1=sigma_G1, sigma_G2=sigma_G2, sigma_G=np.nan,
             chi2_reduced=chi2_red,
             fit_ok=True, flag_unphysical=flag_unphysical,
             fit_method="sbpy",
+            n_clipped=n_clipped,
         )
     except Exception:
         return _fit_one_scipy(alpha, v_red, v_err)
@@ -231,11 +360,13 @@ def fit_asteroid(args) -> dict:
 
     if n_obs < MIN_OBS or phase_range < MIN_PHASE_RANGE:
         result = dict(
-            H=np.nan, G1=np.nan, G2=np.nan,
-            sigma_H=np.nan, sigma_G1=np.nan, sigma_G2=np.nan,
+            H=np.nan, G1=np.nan, G2=np.nan, G=np.nan,
+            sigma_H=np.nan, sigma_G1=np.nan, sigma_G2=np.nan, sigma_G=np.nan,
             chi2_reduced=np.nan,
-            fit_ok=False, flag_unphysical=0, fit_method="skipped",
+            fit_ok=False, flag_unphysical=0, fit_method="skipped", n_clipped=0,
         )
+    elif phase_range < HG_PHASE_MAX:
+        result = _fit_one_hg_scipy(alpha, v_red, v_err)
     else:
         result = _FIT_FUNC(alpha, v_red, v_err)
 
@@ -283,10 +414,24 @@ def main():
           f"{fits['flag_unphysical'].sum():,}")
 
     ok = fits[ok_mask]
+    hg_mask  = fits["fit_method"] == "hg_scipy"
+    print(f"    HG (narrow phase): {hg_mask.sum():,}  "
+          f"HG1G2: {(ok_mask & ~hg_mask).sum():,}")
+    n_clip_total = fits["n_clipped"].sum() if "n_clipped" in fits.columns else 0
+    print(f"    Total clipped obs: {n_clip_total:,}")
+
     print(f"\n  Parameter distributions (fitted objects):")
     for col in ["H", "G1", "G2", "chi2_reduced"]:
-        q = ok[col].quantile([0.05, 0.5, 0.95])
+        valid = ok[col].dropna()
+        if len(valid) == 0:
+            continue
+        q = valid.quantile([0.05, 0.5, 0.95])
         print(f"    {col:15s}  p05={q[0.05]:.3f}  "
+              f"median={q[0.5]:.3f}  p95={q[0.95]:.3f}")
+    hg_ok = fits[hg_mask & ok_mask]
+    if len(hg_ok):
+        q = hg_ok["G"].dropna().quantile([0.05, 0.5, 0.95])
+        print(f"    {'G (HG)':15s}  p05={q[0.05]:.3f}  "
               f"median={q[0.5]:.3f}  p95={q[0.95]:.3f}")
 
     # ── Save ──────────────────────────────────────────────────────────────

@@ -26,9 +26,11 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_PATH = ROOT / "data" / "raw" / "sso_observations.parquet"
 
 # ── TAP endpoints: (name, url, max_retries) ──────────────────────────────────
+# ARI Heidelberg excluded: their schema lacks the ESA-derived columns
+# (g_mag_error, phase_angle, heliocentric_distance, geocentric_distance).
+# If ESA is down, use 02_download_sample_with_orbits.py as fallback.
 TAP_ENDPOINTS = [
-    ("ARI Heidelberg", "https://gaia.ari.uni-heidelberg.de/tap",  2),
-    ("ESA Gaia",       "https://gea.esac.esa.int/tap-server/tap", 5),
+    ("ESA Gaia", "https://gea.esac.esa.int/tap-server/tap", 5),
 ]
 
 # ── TAP Query ─────────────────────────────────────────────────────────────────
@@ -117,11 +119,14 @@ def main():
     print("  GAPC Step 2 — Download sso_observation")
     print("=" * 55)
 
-    if OUT_PATH.exists():
+    if OUT_PATH.exists() and not OUT_PATH.is_symlink():
         df_exist = pd.read_parquet(OUT_PATH, columns=["number_mp"])
-        print(f"\n  Output already exists: {OUT_PATH}")
-        print(f"  Rows: {len(df_exist):,} — delete to re-download.\n")
-        return
+        n_exist = len(df_exist)
+        if n_exist >= 1_000_000:
+            print(f"\n  Output already exists: {OUT_PATH}")
+            print(f"  Rows: {n_exist:,} — delete to re-download.\n")
+            return
+        print(f"\n  Found incomplete output ({n_exist:,} rows < 1M) — re-downloading.")
 
     t0 = time.time()
     results = launch_with_retry()

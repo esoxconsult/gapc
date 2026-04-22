@@ -43,6 +43,9 @@ def _find(local_rel, gasp_rel=None):
             return p3
     return None
 
+# mpc_h_magnitudes.parquet is produced by 02b_mpc_h.py (H from MPCORB.DAT).
+# mpc_orbital_classes.parquet (from GASP) has orbit_code/a_au but no H column.
+MPC_H_PATH   = _find("data/raw/mpc_h_magnitudes.parquet")
 MPC_PATH     = _find("data/raw/mpc_orbital_classes.parquet",
                       "data/raw/mpc_orbital_classes.parquet")
 NEOWISE_PATH = _find("data/raw/neowise_masiero2017.parquet",
@@ -120,36 +123,61 @@ def main():
     all_stats = {}
 
     # ── MPC validation ────────────────────────────────────────────────────
-    if MPC_PATH and MPC_PATH.exists():
-        mpc = pd.read_parquet(MPC_PATH)
-        print(f"\n  MPC: {len(mpc):,} rows, columns: {list(mpc.columns)}")
-
-        # Detect H column name (varies between MPC exports)
-        h_col = next((c for c in mpc.columns
+    # Prefer mpc_h_magnitudes.parquet (from 02b_mpc_h.py, H_mpc column).
+    # Fall back to mpc_orbital_classes.parquet if it ever gains an H column.
+    mpc_h_source = None
+    if MPC_H_PATH and MPC_H_PATH.exists():
+        mpc_h_source = pd.read_parquet(MPC_H_PATH).rename(columns={"H_mpc": "h_mpc"})
+        print(f"\n  MPC H: {len(mpc_h_source):,} rows (from mpc_h_magnitudes.parquet)")
+    elif MPC_PATH and MPC_PATH.exists():
+        mpc_raw = pd.read_parquet(MPC_PATH)
+        h_col = next((c for c in mpc_raw.columns
                       if c.lower() in ["h", "h_mag", "absolute_magnitude"]), None)
         if h_col:
-            mpc = mpc.rename(columns={h_col: "h_mpc"})
-            merged = ok.merge(mpc[["number_mp", "h_mpc"]], on="number_mp", how="left")
-            stats = compute_stats(merged["H"].values, merged["h_mpc"].values, "MPC")
-            all_stats["mpc"] = stats
-            plot_comparison(
-                merged["H"].values, merged["h_mpc"].values,
-                "MPC", PLOT_DIR / "validation_H_mpc.png",
-            )
-        else:
-            print("  ⚠️   MPC H column not found")
+            mpc_h_source = mpc_raw.rename(columns={h_col: "h_mpc"})
+            print(f"\n  MPC H: {len(mpc_h_source):,} rows (from mpc_orbital_classes.parquet)")
+
+    if mpc_h_source is not None:
+        merged = ok.merge(mpc_h_source[["number_mp", "h_mpc"]], on="number_mp", how="left")
+        stats = compute_stats(merged["H"].values, merged["h_mpc"].values, "MPC")
+        all_stats["mpc"] = stats
+        plot_comparison(
+            merged["H"].values, merged["h_mpc"].values,
+            "MPC", PLOT_DIR / "validation_H_mpc.png",
+        )
     else:
-        print("\n  ⚠️   MPC catalog not found — skipping MPC validation")
+        print("\n  ⚠️   MPC H not available — run pipeline/02b_mpc_h.py first")
 
     # ── NEOWISE validation ────────────────────────────────────────────────
     if NEOWISE_PATH and NEOWISE_PATH.exists():
         neo = pd.read_parquet(NEOWISE_PATH)
         print(f"\n  NEOWISE: {len(neo):,} rows, columns: {list(neo.columns)}")
 
+        # Try direct H column first, fall back to deriving from D + p_V
         h_col = next((c for c in neo.columns
                       if c.lower() in ["h", "h_mag", "hmag", "h_v"]), None)
         if h_col:
             neo = neo.rename(columns={h_col: "h_neowise"})
+            print(f"  Using NEOWISE H column: '{h_col}'")
+        else:
+            d_col  = next((c for c in neo.columns
+                           if c.lower() in ["d", "diam", "diameter", "d_km"]), None)
+            pv_col = next((c for c in neo.columns
+                           if c.lower() in ["p_v", "pv", "albedo", "pv_mean",
+                                            "p_v_mean", "geometric_albedo"]), None)
+            if d_col and pv_col:
+                print(f"  Deriving NEOWISE H from D='{d_col}', p_V='{pv_col}'")
+                neo["h_neowise"] = np.nan
+                mask = (neo[d_col] > 0) & (neo[pv_col] > 0)
+                neo.loc[mask, "h_neowise"] = -5.0 * np.log10(
+                    (neo.loc[mask, d_col] / 1329.0)
+                    * np.sqrt(neo.loc[mask, pv_col])
+                )
+                print(f"    Derived H for {mask.sum():,} / {len(neo):,} rows")
+            else:
+                print(f"  ⚠️   NEOWISE: no H column and no D/p_V columns found")
+
+        if "h_neowise" in neo.columns:
             merged = ok.merge(neo[["number_mp", "h_neowise"]], on="number_mp", how="left")
             stats = compute_stats(merged["H"].values, merged["h_neowise"].values, "NEOWISE")
             all_stats["neowise"] = stats
@@ -157,8 +185,6 @@ def main():
                 merged["H"].values, merged["h_neowise"].values,
                 "NEOWISE", PLOT_DIR / "validation_H_neowise.png",
             )
-        else:
-            print("  ⚠️   NEOWISE H column not found")
     else:
         print("\n  ⚠️   NEOWISE catalog not found — skipping NEOWISE validation")
 
