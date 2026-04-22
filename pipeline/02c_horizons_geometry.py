@@ -41,34 +41,60 @@ OBS_PATH   = ROOT / "data" / "interim" / "sso_filtered.parquet"
 BACKUP     = ROOT / "data" / "interim" / "horizons_geometry_backup.parquet"
 CACHE_DIR  = ROOT / "data" / "interim" / "_hz_cache"
 
-JD_J2010   = 2455197.5
-N_WORKERS  = 3          # parallel Horizons threads
-REQ_DELAY  = 3.0        # seconds per thread between requests → ~1 req/sec total
+JD_J2010    = 2455197.5
+N_WORKERS   = 3          # parallel Horizons threads
+REQ_DELAY   = 3.0        # seconds per thread between requests → ~1 req/sec total
+EPOCH_CHUNK = 50         # max JDs per Horizons request (avoid 414 URI-too-long)
+
+
+def _horizons_chunk(number_mp: int, jds: list[float]) -> pd.DataFrame:
+    """Single Horizons request for ≤ EPOCH_CHUNK JDs. Raises on failure."""
+    from astroquery.jplhorizons import Horizons
+    obj = Horizons(id=str(number_mp), location="500", epochs=jds)
+    eph = obj.ephemerides()
+    return pd.DataFrame({
+        "epoch_jd": eph["datetime_jd"].data.data.astype(float),
+        "r_hz":     eph["r"].data.data.astype(float),
+        "delta_hz": eph["delta"].data.data.astype(float),
+        "phase_hz": eph["alpha"].data.data.astype(float),
+    })
+
+
+_RETRY_DELAYS = [30, 90, 270]   # backoff seconds for 5xx errors
 
 
 def fetch_one(number_mp: int, jds: list[float]) -> pd.DataFrame | None:
-    """Query Horizons for one asteroid; return DataFrame or None on failure."""
+    """Query Horizons for one asteroid; batches large epoch lists, retries 5xx."""
     cache_file = CACHE_DIR / f"{number_mp}.parquet"
     if cache_file.exists():
         return pd.read_parquet(cache_file)
 
     time.sleep(REQ_DELAY)
-    try:
-        from astroquery.jplhorizons import Horizons
-        obj = Horizons(id=str(number_mp), location="500", epochs=jds)
-        eph = obj.ephemerides()
+    chunks = [jds[i:i + EPOCH_CHUNK] for i in range(0, len(jds), EPOCH_CHUNK)]
 
-        df = pd.DataFrame({
-            "epoch_jd":   eph["datetime_jd"].data.data.astype(float),
-            "r_hz":       eph["r"].data.data.astype(float),
-            "delta_hz":   eph["delta"].data.data.astype(float),
-            "phase_hz":   eph["alpha"].data.data.astype(float),
-        })
-        df.to_parquet(cache_file, index=False)
-        return df
-    except Exception as e:
-        log.warning(f"  [{number_mp}] Horizons failed: {e}")
-        return None
+    for attempt, delay in enumerate([0] + _RETRY_DELAYS):
+        if delay:
+            log.info(f"  [{number_mp}] retry {attempt} in {delay}s …")
+            time.sleep(delay)
+        try:
+            parts = []
+            for chunk in chunks:
+                parts.append(_horizons_chunk(number_mp, chunk))
+                if len(chunks) > 1:
+                    time.sleep(1.0)
+            df = pd.concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
+            df.to_parquet(cache_file, index=False)
+            return df
+        except Exception as e:
+            msg = str(e)
+            if any(c in msg for c in ("502", "503", "504", "Gateway")):
+                log.warning(f"  [{number_mp}] server error (attempt {attempt+1}): {msg[:80]}")
+            else:
+                log.warning(f"  [{number_mp}] Horizons failed: {msg[:120]}")
+                return None   # non-5xx errors won't improve with retries
+
+    log.warning(f"  [{number_mp}] gave up after {len(_RETRY_DELAYS)+1} attempts")
+    return None
 
 
 def main():
