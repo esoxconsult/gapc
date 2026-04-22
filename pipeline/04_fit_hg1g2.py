@@ -34,6 +34,7 @@ G1G2_SUM_MAX    = 1.0
 
 SIGMA_CLIP_NSIGMA = 5.0   # clip residuals > N × MAD after initial fit
 SIGMA_CLIP_FLOOR  = 0.5   # minimum clip threshold [mag] (preserves lightcurve scatter)
+SIGMA_SYS         = 0.05  # systematic floor [mag]: rotation scatter not in Gaia g_mag_error
 
 N_WORKERS     = 4
 
@@ -353,7 +354,7 @@ def fit_asteroid(args) -> dict:
     number_mp, grp = args
     alpha = grp["phase_angle"].values
     v_red = grp["v_reduced"].values
-    v_err = grp["g_mag_error"].values
+    v_err = np.sqrt(grp["g_mag_error"].values**2 + SIGMA_SYS**2)
 
     phase_range = alpha.max() - alpha.min()
     n_obs = len(alpha)
