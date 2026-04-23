@@ -36,7 +36,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 ROOT       = Path(__file__).resolve().parents[1]
-FITS_PATH  = ROOT / "data" / "final"   / "gapc_catalog_v1.parquet"
+FITS_PATH  = ROOT / "data" / "final"   / "gapc_catalog_v2.parquet"
 OBS_PATH   = ROOT / "data" / "interim" / "sso_filtered.parquet"
 BACKUP     = ROOT / "data" / "interim" / "horizons_geometry_backup.parquet"
 CACHE_DIR  = ROOT / "data" / "interim" / "_hz_cache"
