@@ -34,17 +34,17 @@ PLOT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Taxonomy classes to show explicitly ───────────────────────────────────────
 # Only GASP-matched objects have taxonomy; others shown as "no taxonomy"
-TAX_ORDER  = ["S", "C", "X", "V", "D", "B", "P", "other GASP", "no taxonomy"]
+TAX_ORDER  = ["S", "C", "X", "V", "D", "B", "P", "oth.", "rest"]
 TAX_COLORS = {
-    "S":           "#E05C2A",   # warm orange-red  (S-type)
-    "C":           "#3A7EC6",   # blue             (C-type)
-    "X":           "#7B5EA7",   # purple           (X-complex)
-    "V":           "#D4A83A",   # golden           (V-type)
-    "D":           "#C06070",   # rose             (D-type)
-    "B":           "#5BAD72",   # green            (B-type)
-    "P":           "#8AABAA",   # teal             (P-type)
-    "other GASP":  "#AAAAAA",   # grey
-    "no taxonomy": "#CCCCCC",   # light grey
+    "S":    "#E05C2A",   # warm orange-red  (S-type)
+    "C":    "#3A7EC6",   # blue             (C-type)
+    "X":    "#7B5EA7",   # purple           (X-complex)
+    "V":    "#D4A83A",   # golden           (V-type)
+    "D":    "#C06070",   # rose             (D-type)
+    "B":    "#5BAD72",   # green            (B-type)
+    "P":    "#8AABAA",   # teal             (P-type)
+    "oth.": "#AAAAAA",   # grey             (other GASP taxonomy)
+    "rest": "#CCCCCC",   # light grey       (no GASP match, orbital prior)
 }
 
 CLIP_MAG = 2.5   # clip dH for display
@@ -66,14 +66,14 @@ df["dH_V"] = (df["H_V"] - df["H_mpc"]).clip(-CLIP_MAG, CLIP_MAG)
 # Assign taxonomy label
 def assign_tax(row) -> str:
     if not row["gasp_match"]:
-        return "no taxonomy"
+        return "rest"
     t = row["gasp_taxonomy_ml"]
     if pd.isna(t):
-        return "other GASP"
+        return "oth."
     t = str(t).strip().upper()
     if t in TAX_COLORS:
         return t
-    return "other GASP"
+    return "oth."
 
 df["tax_label"] = df.apply(assign_tax, axis=1)
 
@@ -88,11 +88,19 @@ for t in TAX_ORDER:
               f"dH_V median={sub['dH_V'].median():+.3f}")
 
 # ── Figure setup ──────────────────────────────────────────────────────────────
+plt.rcParams.update({
+    "font.family":      "serif",
+    "font.size":        8,
+    "axes.linewidth":   0.7,
+    "xtick.labelsize":  8,
+    "ytick.labelsize":  8,
+})
+
 fig, (ax1, ax2) = plt.subplots(
     1, 2,
-    figsize=(7.0, 4.2),
+    figsize=(7.0, 4.0),
     sharey=True,
-    gridspec_kw={"wspace": 0.06},
+    gridspec_kw={"wspace": 0.05},
 )
 fig.patch.set_facecolor("white")
 
@@ -131,8 +139,8 @@ def draw_panel(ax, col: str, title: str, ylabel: bool):
                   colors="black", lw=MEDIAN_LW, zorder=3)
 
         # n label
-        ax.text(x, CLIP_MAG * 0.88, f"n={len(sub)//1000:.0f}k" if len(sub)>=1000
-                else f"n={len(sub)}",
+        lbl = f"{len(sub)//1000:.0f}k" if len(sub) >= 1000 else str(len(sub))
+        ax.text(x, CLIP_MAG * 0.93, lbl,
                 ha="center", va="top", fontsize=5.5, color="#444444")
 
     # Overall median line
@@ -142,17 +150,18 @@ def draw_panel(ax, col: str, title: str, ylabel: bool):
     ax.axhline(0, color="black", ls="-", lw=0.7, alpha=0.4, zorder=4)
 
     ax.set_xticks(list(x_pos.values()))
-    ax.set_xticklabels(list(x_pos.keys()), fontsize=8)
+    labels = list(x_pos.keys())
+    ax.set_xticklabels(labels, fontsize=7.5, rotation=0)
     ax.set_xlim(-0.6, len(tax_shown) - 0.4)
     ax.set_ylim(-CLIP_MAG * 1.05, CLIP_MAG * 1.05)
     ax.yaxis.set_major_locator(ticker.MultipleLocator(0.5))
     ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.1))
     ax.tick_params(which="both", direction="in", right=True, top=True)
-    ax.set_title(title, fontsize=9, pad=4)
+    ax.set_title(title, fontsize=8.5, pad=5)
     if ylabel:
-        ax.set_ylabel(r"$H_\mathrm{GAPC} - H_\mathrm{MPC}$ (mag)", fontsize=9)
-    ax.legend(fontsize=7, loc="lower right", framealpha=0.85)
-    ax.grid(axis="y", lw=0.4, alpha=0.3)
+        ax.set_ylabel(r"$H_\mathrm{GAPC} - H_\mathrm{MPC}$  (mag)", fontsize=9)
+    ax.legend(fontsize=7, loc="lower right", framealpha=0.9, edgecolor="#aaaaaa")
+    ax.grid(axis="y", lw=0.35, alpha=0.35, color="#888888")
     return overall_med
 
 np.random.seed(42)
@@ -168,10 +177,10 @@ fig.text(0.5, -0.02, "Taxonomy class (Gaia SSO / GASP ML)", ha="center", fontsiz
 n_gasp  = (df["BV_source"] == "gasp").sum()
 n_tax   = (df["BV_source"] == "taxonomy_class").sum()
 n_orb   = (df["BV_source"] == "orbital_prior").sum()
-ann = (f"B−V source: GASP direct ({n_gasp:,}) · "
+ann = (fr"$B-V$ source: GASP direct ({n_gasp:,}) · "
        f"taxonomy class ({n_tax:,}) · "
        f"orbital prior ({n_orb:,})")
-fig.text(0.5, -0.07, ann, ha="center", fontsize=6.5, color="#555555")
+fig.text(0.5, -0.04, ann, ha="center", fontsize=6.5, color="#555555")
 
 plt.tight_layout(rect=[0, 0.04, 1, 1])
 
