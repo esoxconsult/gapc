@@ -13,14 +13,12 @@ Outputs:
   plots/09_bias_clean_vs_all.png
 """
 
-import sys
 import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
-from scipy.stats import pearsonr
 
 ROOT     = Path(__file__).resolve().parents[1]
 CAT_PATH = ROOT / "data" / "final" / "gapc_catalog_v2.parquet"
@@ -38,7 +36,6 @@ def bias_stats(diff, label):
     mean = d.mean()
     std  = d.std()
     rms  = np.sqrt((d**2).mean())
-    r, p = pearsonr(d.index.map(lambda i: 0), d)  # placeholder
     print(f"  {label} (n={len(d):,})")
     print(f"    median = {med:+.4f} mag")
     print(f"    mean   = {mean:+.4f} mag")
