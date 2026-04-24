@@ -147,8 +147,10 @@ def main():
     if w_df is not None and len(w_df) > 0:
         print(f"  Columns available: {list(w_df.columns)[:10]}")
         # Try different column name variants
-        num_col = next((c for c in w_df.columns if c.lower() in ("num", "number", "ast")), None)
-        hv_ext  = next((c for c in w_df.columns if c.upper() in ("HV", "H_V", "H")), None)
+        num_col = next((c for c in w_df.columns
+                        if c.lower() in ("num", "number", "ast", "number_mp")), None)
+        hv_ext  = next((c for c in w_df.columns
+                        if c.upper() in ("HV", "H_V", "H", "HMAG")), None)
         if num_col and hv_ext:
             res, stats = compare_H(gapc, w_df, hv_ext, num_col, "Waszczak+2015 PTF", hv_col)
             if res is not None:
