@@ -47,15 +47,18 @@ DATA_INT  = ROOT / "data" / "interim"
 # Center: asteroid number of the defining body
 FAMILIES = {
     # name:  (center_num, a_p,    e_p,    sinI_p, v_cut_ms, age_Myr, age_unc_Myr, tax)
-    "Koronis": (158,   2.8758, 0.0459, 0.0378, 50,  2900, 500, "S"),
-    "Eos":     (221,   3.0134, 0.0851, 0.1745, 70,  1300, 200, "K"),
-    "Themis":  (24,    3.1360, 0.1557, 0.0271, 70,  2500, 500, "C"),
-    "Flora":   (8,     2.2013, 0.1455, 0.1044, 60,   950, 300, "S"),
-    "Eunomia": (15,    2.6428, 0.1872, 0.2215, 70,  2500, 500, "S"),
-    "Vesta":   (4,     2.3617, 0.0977, 0.1137, 60,  1000, 500, "V"),
-    "Hygiea":  (10,    3.1367, 0.1237, 0.0842, 70,  2000, 500, "C"),
-    "Veritas":  (490,  3.1742, 0.0666, 0.1550, 30,     8,   2, "C"),
-    "Nysa":    (44,    2.4237, 0.1872, 0.0491, 50,  2000, 500, "S/E"),
+    # Proper element centers from AstDys all.syn (Knezevic 2024).
+    # v_cut at 150 m/s captures "extended family region"; Veritas tight (young).
+    # Note: Flora poorly recovered with this metric (dispersed in proper space).
+    "Koronis": (158,   2.8688, 0.0452, 0.0375, 150,  2900, 500, "S"),
+    "Eos":     (221,   3.0124, 0.0726, 0.1712, 150,  1300, 200, "K"),
+    "Themis":  (24,    3.1345, 0.1528, 0.0189, 150,  2500, 500, "C"),
+    "Flora":   (8,     2.2014, 0.1449, 0.0971, 150,   950, 300, "S"),
+    "Eunomia": (15,    2.6437, 0.1486, 0.2266, 150,  2500, 500, "S"),
+    "Vesta":   (4,     2.3615, 0.0988, 0.1113, 150,  1000, 500, "V"),
+    "Hygiea":  (10,    3.1418, 0.1356, 0.0890, 150,  2000, 500, "C"),
+    "Veritas":  (490,  3.1740, 0.0656, 0.1593,  60,     8,   2, "C"),
+    "Nysa":    (44,    2.4227, 0.1740, 0.0534, 150,  2000, 500, "S/E"),
 }
 
 TWO_THIRDS_SQ = (2.0 / 3.0) ** 2
@@ -156,7 +159,7 @@ def main():
     age_g_rows = []
     for fam_name, (cnum, a_c, e_c, si_c, v_cut, age, age_unc, fam_tax) in FAMILIES.items():
         sub = merged[merged["family_name"] == fam_name]
-        if len(sub) < 20:
+        if len(sub) < 15:
             continue
         g = sub["G"].dropna()
         s_sub = sub[sub["_tax"] == "S"]
@@ -171,7 +174,13 @@ def main():
             G_S_sem=g_s.std()/np.sqrt(max(len(g_s),1)) if len(g_s) > 5 else np.nan,
         ))
 
-    res = pd.DataFrame(age_g_rows).dropna(subset=["G_median", "age_Myr"])
+    if not age_g_rows:
+        print("\n  No families with sufficient members — check v_cut or data availability.")
+        rho_all = rho_s = p_all = p_s = np.nan
+        res = pd.DataFrame(columns=["family","age_Myr","age_unc","G_median","G_std",
+                                     "G_sem","n","n_S","G_S_median","G_S_sem"])
+    else:
+        res = pd.DataFrame(age_g_rows).dropna(subset=["G_median", "age_Myr"])
 
     # Spearman correlation age vs G
     if len(res) >= 4:
