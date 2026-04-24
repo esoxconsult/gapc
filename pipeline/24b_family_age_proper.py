@@ -64,17 +64,14 @@ TWO_THIRDS_SQ = (2.0 / 3.0) ** 2
 def velocity_metric(a1, e1, si1, a_c, e_c, si_c):
     """
     Velocity-equivalent distance (m/s) between object and family center.
-    Using simplified Zappala 1994 metric, a in AU.
-    n in rad/yr → convert to AU/yr, then multiply by ~30 km/s / (2π AU/yr)
+    Zappala+1994 metric: d_v = n_c*a_c * sqrt(5/4*(da/a)^2 + 2*de^2 + 2*dsinI^2)
+    n_c*a_c = orbital velocity = sqrt(GM/a) ≈ 2π/sqrt(a) AU/yr * 4740 m/s per AU/yr
     """
-    n_c = 2 * np.pi / np.sqrt(a_c ** 3)   # rad/yr
-    AU_per_yr_to_m_s = 1495978707.0 / 3.15576e7  # 1 AU/yr in m/s = 4740.4 m/s
-    n_AU_s = n_c * AU_per_yr_to_m_s         # m/s per AU_fraction
-    c = TWO_THIRDS_SQ / max((1 - e_c ** 2) ** 2, 1e-6)
-    d_v = n_AU_s * a_c * np.sqrt(
-        ((a1 - a_c) / a_c) ** 2 +
-        c * (e1 - e_c) ** 2 +
-        c * (si1 - si_c) ** 2
+    v_orb = 2 * np.pi / np.sqrt(a_c) * 4740.0   # orbital velocity in m/s (a in AU)
+    d_v = v_orb * np.sqrt(
+        1.25 * ((a1 - a_c) / a_c) ** 2 +
+        2.0  * (e1 - e_c) ** 2 +
+        2.0  * (si1 - si_c) ** 2
     )
     return d_v
 
@@ -134,16 +131,19 @@ def main():
             a_c, e_c, si_c
         )
         in_fam = dv < v_cut
-        n_in = in_fam.sum()
-        print(f"  {fam_name:12s}  v_cut={v_cut:3d} m/s  members={n_in:5,}")
         # Only assign if closer than current best (handle overlaps)
         better = in_fam & (dv < merged["family_dv"])
         merged.loc[better, "family_name"] = fam_name
         merged.loc[better, "family_dv"]   = dv[better]
-        fam_records.append(dict(family=fam_name, n=n_in, age_Myr=age,
+        fam_records.append(dict(family=fam_name, age_Myr=age,
                                 age_unc=age_unc, tax=fam_tax, v_cut=v_cut))
 
-    fam_df = pd.DataFrame(fam_records)
+    # Print exclusive membership counts
+    print()
+    for fam_name in FAMILIES:
+        n_exc = (merged["family_name"] == fam_name).sum()
+        v_cut = FAMILIES[fam_name][4]
+        print(f"  {fam_name:12s}  v_cut={v_cut:3d} m/s  exclusive members={n_exc:5,}")
     print(f"\n  Field (no family): {(merged['family_name']=='field').sum():,}")
 
     # ── Save membership ────────────────────────────────────────────────────────
