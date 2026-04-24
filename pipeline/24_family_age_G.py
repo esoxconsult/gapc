@@ -31,8 +31,22 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 ROOT     = Path(__file__).resolve().parents[1]
 CAT_PATH = ROOT / "data" / "final"   / "gapc_catalog_v4.parquet"
 FAM_PATH = ROOT / "data" / "interim" / "family_membership_proper.parquet"
+OC_PATH  = ROOT / "data" / "interim" / "mpcorb_orbital_class.parquet"
 PLOT_DIR = ROOT / "plots"
 LOG_DIR  = ROOT / "logs"
+
+# Osculating-element family boxes (fallback when proper elements unavailable)
+FAMILY_BOXES = {
+    "Hungaria":    dict(a=(1.78,2.00), e=(0.0,0.18),  i=(16,35)),
+    "Flora":       dict(a=(2.15,2.33), e=(0.0,0.20),  i=(2, 10)),
+    "Vesta":       dict(a=(2.26,2.50), e=(0.0,0.18),  i=(5, 9)),
+    "Nysa-Polana": dict(a=(2.30,2.55), e=(0.10,0.30), i=(0, 5)),
+    "Eunomia":     dict(a=(2.53,2.72), e=(0.12,0.22), i=(11,20)),
+    "Koronis":     dict(a=(2.83,2.95), e=(0.0,0.09),  i=(0, 4)),
+    "Eos":         dict(a=(2.97,3.08), e=(0.05,0.15), i=(8, 12)),
+    "Themis":      dict(a=(3.05,3.22), e=(0.0,0.22),  i=(0, 4)),
+    "Veritas":     dict(a=(3.16,3.19), e=(0.05,0.09), i=(9, 10)),
+}
 
 MIN_FAMILY_N = 30   # minimum GAPC members to include a family in the analysis
 
@@ -87,6 +101,34 @@ def main():
     print("=" * 60)
 
     PLOT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ── Load family membership (prefer proper elements, fall back to osculating) ──
+    fam_source = "unknown"
+    if FAM_PATH.exists():
+        fam_df = pd.read_parquet(FAM_PATH)
+        fam_source = "proper elements (AstDys)"
+        print(f"\n  Family membership: {fam_source}")
+    elif OC_PATH.exists():
+        print("\n  Proper elements not available — deriving family membership from MPCORB osculating elements")
+        orb = pd.read_parquet(OC_PATH)
+        n = len(orb)
+        fam_arr = np.full(n, "Background", dtype=object)
+        for name, box in FAMILY_BOXES.items():
+            mask = (
+                (orb["a_au"]   .between(*box["a"])) &
+                (orb["ecc"]    .between(*box["e"])) &
+                (orb["inc_deg"].between(*box["i"]))
+            )
+            fam_arr[mask.values] = name
+        orb["family_name"] = fam_arr
+        fam_df = orb[["number_mp", "family_name"]].copy()
+        fam_source = "osculating element boxes (MPCORB)"
+        print(f"  Family membership: {fam_source}")
+        for fam in sorted(FAMILY_BOXES):
+            n_fam = (fam_arr == fam).sum()
+            print(f"    {fam:12s}: {n_fam:,}")
+    else:
+        print("  ERROR: No orbital element data available"); return
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── Load data ─────────────────────────────────────────────────────────────
@@ -94,15 +136,16 @@ def main():
     df = pd.read_parquet(CAT_PATH)
     print(f"  Rows: {len(df):,}")
 
-    print(f"Loading family membership: {FAM_PATH}")
-    fam = pd.read_parquet(FAM_PATH)
-    print(f"  Family rows: {len(fam):,}")
+    # fam_df already loaded above (proper or osculating fallback)
+    fam_col = "family_proper" if "family_proper" in fam_df.columns else "family_name"
+    fam_merge = fam_df[["number_mp", fam_col]].drop_duplicates("number_mp").rename(
+        columns={fam_col: "family_proper"})
+    print(f"  Family membership rows: {len(fam_merge):,}")
 
     # Merge
-    df = df.merge(fam[["number_mp", "family_proper", "a_p", "e_p", "i_p"]].drop_duplicates("number_mp"),
-                  on="number_mp", how="left")
+    df = df.merge(fam_merge, on="number_mp", how="left")
     df["family_proper"] = df["family_proper"].fillna("Field")
-    print(f"  Objects with proper elements: {(df['family_proper'] != 'Field').sum():,}")
+    print(f"  Objects with family assignment: {(df['family_proper'] != 'Field').sum():,}")
 
     # Taxonomy
     df["_tax"] = get_tax_group(df)
