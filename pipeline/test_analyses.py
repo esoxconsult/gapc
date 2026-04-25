@@ -10,6 +10,8 @@ Tests cover:
   2. Data integrity (column presence, value ranges, NaN rates)
   3. Scientific sanity (known properties, expected orderings)
   4. Cross-consistency between analysis steps
+
+Steps covered: 09–18, 21b, 22b, 24b, 26, 27, 29
 """
 
 import sys
@@ -318,6 +320,264 @@ def test_18():
 
 
 # ─────────────────────────────────────────────────────────────
+# Step 21b — G vs size, confound-controlled
+# ─────────────────────────────────────────────────────────────
+def test_21b():
+    print("\n── Step 21b: G vs size confound-controlled ──")
+    log = ROOT / "logs" / "21b_g_size_controlled_stats.txt"
+    if not check("21b log exists", log.exists()):
+        return
+    txt = log.read_text()
+
+    # Uncontrolled rho should be negative (larger objects → lower G)
+    for line in txt.split("\n"):
+        if line.startswith("Uncontrolled rho"):
+            try:
+                rho_unc = float(line.split("=")[1].split()[0])
+                check("21b uncontrolled rho(G,D) < 0", rho_unc < 0, f"rho={rho_unc:+.4f}")
+            except (IndexError, ValueError):
+                check("21b uncontrolled rho parseable", False)
+            break
+
+    # Interpretation line: "X zones with significant negative S-type rho"
+    n_sig_neg = None
+    for line in txt.split("\n"):
+        if "zones with significant negative S-type rho" in line:
+            try:
+                n_sig_neg = int(line.split("Interpretation:")[1].split("zones")[0].strip())
+            except (IndexError, ValueError):
+                pass
+            break
+    if n_sig_neg is not None:
+        check("21b ≥2 zones have significant negative S-type rho(G,D)",
+              n_sig_neg >= 2, f"n_sig_neg={n_sig_neg}")
+    else:
+        check("21b interpretation line parseable", False)
+
+    # All S-type zone rows should have negative rho
+    s_rhos = []
+    for line in txt.split("\n"):
+        if "S-type" in line and "rho=" in line:
+            try:
+                rho = float(line.split("rho=")[1].split()[0])
+                s_rhos.append(rho)
+            except (IndexError, ValueError):
+                pass
+    if s_rhos:
+        check("21b all S-type zone rhos < 0",
+              all(r < 0 for r in s_rhos),
+              f"rhos={[f'{r:+.3f}' for r in s_rhos]}")
+    check("21b plot exists", (ROOT / "plots" / "21b_g_size_controlled.png").exists())
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 22b — External H calibration
+# ─────────────────────────────────────────────────────────────
+def test_22b():
+    print("\n── Step 22b: External H calibration ──")
+    log = ROOT / "logs" / "22b_external_calibration_stats.txt"
+    if not check("22b log exists", log.exists()):
+        return
+    txt = log.read_text()
+    check("22b plot exists", (ROOT / "plots" / "22b_external_calibration.png").exists())
+
+    if "No external data available" in txt:
+        check("22b external data available (SKIP — no data, plot only)", True,
+              "no external catalog cached")
+        return
+
+    # Parse Waszczak+2015 PTF block
+    for i, line in enumerate(txt.split("\n")):
+        if "Waszczak" in line and "PTF" in line:
+            # Next line has the stats
+            block = "\n".join(txt.split("\n")[i:i+3])
+            try:
+                n_match = int(block.split("n=")[1].split(",")[0].replace(",", ""))
+                check("22b PTF n_matched > 5000", n_match > 5000, f"n={n_match:,}")
+            except (IndexError, ValueError):
+                check("22b PTF n parseable", False)
+            try:
+                med = float(block.split("median=")[1].split()[0])
+                check("22b PTF |median offset| < 0.2 mag", abs(med) < 0.2, f"median={med:+.4f}")
+            except (IndexError, ValueError):
+                check("22b PTF median parseable", False)
+            try:
+                r = float(block.split("Pearson_r=")[1].split()[0])
+                check("22b PTF Pearson r > 0.7", r > 0.7, f"r={r:.4f}")
+            except (IndexError, ValueError):
+                pass
+            break
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 24b — Family age × G (proper elements)
+# ─────────────────────────────────────────────────────────────
+def test_24b():
+    print("\n── Step 24b: Family age × G (proper elements) ──")
+    mem = ROOT / "data" / "interim" / "family_membership_proper.parquet"
+    if not check("24b membership parquet exists", mem.exists()):
+        return
+    mem_df = load(mem)
+    check("24b membership has family_name column", "family_name" in mem_df.columns)
+    check("24b membership has > 10K rows", len(mem_df) > 10_000, f"n={len(mem_df):,}")
+    n_families = mem_df["family_name"].nunique() - 1   # subtract "field"
+    check("24b ≥3 distinct families found", n_families >= 3, f"n_families={n_families}")
+
+    log = ROOT / "logs" / "24b_family_age_proper_stats.txt"
+    if not check("24b log exists", log.exists()):
+        return
+    txt = log.read_text()
+
+    # Proper element coverage > 100K
+    for line in txt.split("\n"):
+        if "Proper element coverage:" in line:
+            try:
+                n_prop = int(line.split(":")[1].split("objects")[0].replace(",", "").strip())
+                check("24b proper element coverage > 100K", n_prop > 100_000, f"n={n_prop:,}")
+            except (IndexError, ValueError):
+                check("24b proper element count parseable", False)
+            break
+
+    # Family table: ≥2 data rows after header
+    data_lines = [l for l in txt.split("\n")
+                  if l and not l.startswith("=") and not l.startswith("G")
+                  and not l.startswith("Spearman") and not l.startswith("GAPC")
+                  and not l.startswith("Proper") and not l.startswith("Family")
+                  and "  " in l and "." in l]
+    check("24b ≥2 families in log table", len(data_lines) >= 2, f"rows={len(data_lines)}")
+    check("24b plot exists", (ROOT / "plots" / "24b_family_age_proper.png").exists())
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 26 — Albedo × G × diameter (space weathering triple)
+# ─────────────────────────────────────────────────────────────
+def test_26():
+    print("\n── Step 26: Albedo × G × diameter ──")
+    log = ROOT / "logs" / "26_albedo_weathering_stats.txt"
+    if not check("26 log exists", log.exists()):
+        return
+    txt = log.read_text()
+
+    # NEOWISE count
+    for line in txt.split("\n"):
+        if "NEOWISE objects:" in line:
+            try:
+                n_neo = int(line.split(":")[1].replace(",", "").strip())
+                check("26 NEOWISE objects > 500", n_neo > 500, f"n={n_neo:,}")
+            except (IndexError, ValueError):
+                check("26 NEOWISE count parseable", False)
+            break
+
+    # Parse data rows: zone  tax  pair  n  rho  p
+    dpv_rhos = []
+    for line in txt.split("\n"):
+        parts = line.split()
+        if len(parts) >= 5 and "D-pV" in parts:
+            try:
+                rho = float(parts[-2])
+                dpv_rhos.append(rho)
+            except (IndexError, ValueError):
+                pass
+
+    if dpv_rhos:
+        check("26 D-pV rho < 0 (larger → darker, expect −)",
+              all(r < 0 for r in dpv_rhos),
+              f"D-pV rhos={[f'{r:+.3f}' for r in dpv_rhos]}")
+    check("26 plot exists", (ROOT / "plots" / "26_albedo_weathering.png").exists())
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 27 — Spectral slope vs size
+# ─────────────────────────────────────────────────────────────
+def test_27():
+    print("\n── Step 27: Spectral slope vs size ──")
+    log = ROOT / "logs" / "27_spectral_slope_size_stats.txt"
+    if not check("27 log exists", log.exists()):
+        return
+    txt = log.read_text()
+
+    # Objects with GASP slope
+    for line in txt.split("\n"):
+        if "Objects with GASP slope:" in line:
+            try:
+                n_sl = int(line.split(":")[1].replace(",", "").strip())
+                check("27 objects with spectral slope > 5K", n_sl > 5_000, f"n={n_sl:,}")
+            except (IndexError, ValueError):
+                check("27 slope count parseable", False)
+            break
+
+    # At least one finite S-type row (zone S-type pair rho p)
+    s_rows = [l for l in txt.split("\n")
+              if "S" in l and ("D-slope" in l or "slope-G" in l or "D-G" in l)
+              and "rho=" not in l   # skip header-style
+              and len(l.split()) >= 5]
+    check("27 ≥1 S-type rows in log", len(s_rows) >= 1, f"rows={len(s_rows)}")
+    check("27 plot exists", (ROOT / "plots" / "27_spectral_slope_size.png").exists())
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 29 — Binary asteroids vs variability flag
+# ─────────────────────────────────────────────────────────────
+def test_29():
+    print("\n── Step 29: Binary asteroids vs variability flag ──")
+    log = ROOT / "logs" / "29_binary_variability_stats.txt"
+    if not check("29 log exists", log.exists()):
+        return
+    txt = log.read_text()
+
+    # Number of binaries matched in GAPC
+    for line in txt.split("\n"):
+        if "Binary catalog:" in line and "in GAPC" in line:
+            try:
+                n_in_gapc = int(line.split("in GAPC")[0].split(",")[-1].strip())
+                check("29 ≥5 known binaries in GAPC catalog", n_in_gapc >= 5,
+                      f"n={n_in_gapc}")
+            except (IndexError, ValueError):
+                check("29 binary count parseable", False)
+            break
+
+    # chi2 medians: binary > non-binary
+    chi2_bin = chi2_nonbin = None
+    for line in txt.split("\n"):
+        if line.startswith("chi2 binary median:"):
+            try:
+                chi2_bin = float(line.split(":")[1].strip())
+            except (IndexError, ValueError):
+                pass
+        elif line.startswith("chi2 non-binary median:"):
+            try:
+                chi2_nonbin = float(line.split(":")[1].strip())
+            except (IndexError, ValueError):
+                pass
+    if chi2_bin is not None and chi2_nonbin is not None:
+        check("29 binary chi2 median > non-binary chi2 median",
+              chi2_bin > chi2_nonbin,
+              f"binary={chi2_bin:.1f}  non-binary={chi2_nonbin:.2f}")
+
+    # Mann-Whitney p < 0.05
+    for line in txt.split("\n"):
+        if line.startswith("Mann-Whitney p:"):
+            try:
+                pval = float(line.split(":")[1].strip())
+                check("29 Mann-Whitney p < 0.05 (binary chi2 > non-binary)",
+                      pval < 0.05, f"p={pval:.3e}")
+            except (IndexError, ValueError):
+                check("29 Mann-Whitney p parseable", False)
+            break
+
+    # Kleopatra from v3_var catalog
+    v3var = ROOT / "data" / "final" / "gapc_catalog_v3_var.parquet"
+    if v3var.exists():
+        df = load(v3var)
+        if "chi2_reduced" in df.columns and 216 in df["number_mp"].values:
+            df["_rank"] = df["chi2_reduced"].rank(ascending=False, method="min")
+            kleo_rank = int(df.loc[df["number_mp"] == 216, "_rank"].values[0])
+            check("29 Kleopatra (#216) chi2 rank ≤ 5",
+                  kleo_rank <= 5, f"rank={kleo_rank}")
+    check("29 plot exists", (ROOT / "plots" / "29_binary_variability.png").exists())
+
+
+# ─────────────────────────────────────────────────────────────
 # Cross-consistency tests
 # ─────────────────────────────────────────────────────────────
 def test_cross_consistency():
@@ -353,6 +613,7 @@ def main():
 
     for fn in [test_09, test_10, test_11, test_12, test_13,
                test_14, test_15, test_16, test_17, test_18,
+               test_21b, test_22b, test_24b, test_26, test_27, test_29,
                test_cross_consistency]:
         try:
             fn()
