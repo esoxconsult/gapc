@@ -392,7 +392,7 @@ def test_22b():
             # Next line has the stats
             block = "\n".join(txt.split("\n")[i:i+3])
             try:
-                n_match = int(block.split("n=")[1].split(",")[0].replace(",", ""))
+                n_match = int(block.split("n=")[1].split()[0].replace(",", ""))
                 check("22b PTF n_matched > 5000", n_match > 5000, f"n={n_match:,}")
             except (IndexError, ValueError):
                 check("22b PTF n parseable", False)
