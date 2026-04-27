@@ -46,9 +46,9 @@ CACHE_CSV = DATA_RAW / "mahlke2021_atlas_hg.csv"
 VIZ_ID    = "VII/288"
 
 # ATLAS o-band → V offset (Tonry+2018 / Erasmus+2020 approximation):
-# V − o ≈ +0.17 mag for solar-colour asteroid (mean S-type)
-# H_V = H_o − 0.17
-V_MINUS_O = 0.17  # mag
+# V − o ≈ +0.17 mag for solar-colour S-type (o is redder → o brighter → V fainter)
+# H_V = H_o + (V − o) = H_o + 0.17  [V-band is fainter → larger H]
+V_MINUS_O = 0.17  # mag; V - o > 0 means V is fainter than o
 
 
 def g12star_to_g(g12):
@@ -119,13 +119,13 @@ def main():
     atlas["number_mp"] = atlas["number_mp"].astype("int64")
     atlas["H_o"]  = pd.to_numeric(atlas["H"],   errors="coerce")
     atlas["G12"]  = pd.to_numeric(atlas["G12"],  errors="coerce")
-    atlas["H_V_atlas"] = atlas["H_o"] - V_MINUS_O
+    atlas["H_V_atlas"] = atlas["H_o"] + V_MINUS_O  # H_V = H_o + (V-o)
     atlas["G_atlas"]   = atlas["G12"].apply(
         lambda g: g12star_to_g(g) if pd.notna(g) else np.nan)
 
     print(f"\n  ATLAS objects with H_o: {atlas['H_o'].notna().sum():,}")
     print(f"  H_o range: {atlas['H_o'].min():.2f} – {atlas['H_o'].max():.2f}")
-    print(f"  H_V(ATLAS) = H_o − {V_MINUS_O}: "
+    print(f"  H_V(ATLAS) = H_o + {V_MINUS_O}: "
           f"{atlas['H_V_atlas'].min():.2f} – {atlas['H_V_atlas'].max():.2f}")
 
     # ── Load GAPC ─────────────────────────────────────────────────────────────
