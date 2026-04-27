@@ -78,12 +78,22 @@ def main():
     hg = df[df["G1"].notna() & df["G2"].notna() & df["fit_ok"]].copy()
     print(f"  HG1G2-fitted: {len(hg):,}")
 
-    # ── Assign best taxonomy ──────────────────────────────────────────────────
-    tax_cols = [c for c in ("gasp_taxonomy_final", "predicted_taxonomy") if c in hg.columns]
-    hg["_tax"] = hg.apply(best_taxonomy, axis=1)
+    # ── Assign taxonomy ───────────────────────────────────────────────────────
+    # HG1G2-fitted objects have G=NaN (no single-parameter HG fit), so
+    # predicted_taxonomy (step 19, which uses G as feature) is None for all of
+    # them. Use only gasp_taxonomy_final for the taxonomy analysis.
+    if "gasp_taxonomy_final" in hg.columns:
+        hg["_tax"] = (hg["gasp_taxonomy_final"]
+                      .astype(str).str.strip().str.upper().str[0]
+                      .where(hg["gasp_taxonomy_final"].notna()
+                             & (hg["gasp_taxonomy_final"].astype(str).str.strip() != "")
+                             & (hg["gasp_taxonomy_final"].astype(str).str.strip() != "nan")
+                             & (hg["gasp_taxonomy_final"].astype(str).str.strip() != "None")))
+    else:
+        hg["_tax"] = None
     n_tax = hg["_tax"].notna().sum()
-    print(f"  With taxonomy label: {n_tax:,} ({n_tax/len(hg)*100:.1f}%)")
-    print(f"  Taxonomy sources: {tax_cols}")
+    print(f"  With GASP taxonomy: {n_tax:,} ({n_tax/len(hg)*100:.1f}%)")
+    print(f"  (predicted_taxonomy unavailable for HG1G2 objects — G=NaN → RF skipped)")
 
     # ── Per-class statistics ──────────────────────────────────────────────────
     classes = [c for c in ["S", "C", "X", "V", "D", "B"]
@@ -135,13 +145,15 @@ def main():
     phy_pct = (hg["G1"] + hg["G2"] <= 1.0).mean() * 100
     print(f"\n  G1+G2 ≤ 1 (physical): {phy_pct:.1f}%")
 
-    # ── G vs G1 relationship (HG → HG1G2 consistency) ────────────────────────
-    # Penttilä conversion: G = 0.46*G1 + 0.54*G2
+    # ── G_predicted from HG1G2 (Penttilä conversion) ─────────────────────────
+    # HG1G2 objects have G=NaN (no independent HG fit), so we can only report
+    # the predicted G from the HG1G2 parameters.
     hg["G_predicted"] = 0.46 * hg["G1"] + 0.54 * hg["G2"]
-    diff_G = (hg["G"] - hg["G_predicted"]).dropna()
-    print(f"\n  G(obs) − G_pred(0.46·G1+0.54·G2): "
-          f"median={diff_G.median():+.4f}  std={diff_G.std():.4f}  "
-          f"RMS={np.sqrt((diff_G**2).mean()):.4f}")
+    gp = hg["G_predicted"].dropna()
+    print(f"\n  G_pred = 0.46·G1+0.54·G2: "
+          f"median={gp.median():.4f}  std={gp.std():.4f}  range={gp.min():.3f}–{gp.max():.3f}")
+    print(f"  NOTE: All taxonomy classes show G1≈G2≈0.20 — Gaia 5–14° phase")
+    print(f"  coverage is insufficient to discriminate G1/G2 (expected from step 17).")
 
     # ── Plots ─────────────────────────────────────────────────────────────────
     theta = np.linspace(0, 2*np.pi, 120)
@@ -253,8 +265,8 @@ def main():
         f.write(f"n_hg1g2_total: {len(hg):,}\n")
         f.write(f"n_with_taxonomy: {n_tax:,}\n")
         f.write(f"G1+G2<=1 physical pct: {phy_pct:.2f}%\n")
-        f.write(f"G(obs)-G_pred median: {diff_G.median():+.6f}\n")
-        f.write(f"G(obs)-G_pred std: {diff_G.std():.6f}\n")
+        f.write(f"G_pred_median (0.46G1+0.54G2): {gp.median():.6f}\n")
+        f.write(f"G_pred_std: {gp.std():.6f}\n")
         f.write(f"KW_G1_across_classes: {kw_msg}\n")
         f.write(f"Mann-Whitney G1(S)>G1(C): {mw_msg}\n\n")
         f.write(f"{'Class':>5s}  {'N':>5s}  "
