@@ -11,7 +11,7 @@ Tests cover:
   3. Scientific sanity (known properties, expected orderings)
   4. Cross-consistency between analysis steps
 
-Steps covered: 09–18, 21b, 22b, 24b, 26, 27, 28, 29, 30, 33, 34, 35, 36
+Steps covered: 09–18, 21b, 22b, 24b, 26, 27, 28, 29, 30, 33, 34, 35, 36, 37, 38
 """
 
 import sys
@@ -877,6 +877,78 @@ def test_36():
 
 
 # ─────────────────────────────────────────────────────────────
+# Step 37 — Full weathering analysis
+# ─────────────────────────────────────────────────────────────
+def test_37():
+    print("\n── Step 37: Full space weathering analysis ──")
+    log = ROOT / "logs" / "37_weathering_full_stats.txt"
+    plt = ROOT / "plots" / "37_weathering_full.png"
+    check("37 log exists", log.exists())
+    check("37 plot exists", plt.exists())
+    if not log.exists():
+        return
+    txt = log.read_text()
+    # G × p_V should be positive (bright → high G)
+    import re
+    m = re.search(r"G × p_V \(all\).*?rho=([+-]?\d+\.\d+)", txt)
+    if m:
+        rho_gp = float(m.group(1))
+        check("37 rho(G, p_V) > 0", rho_gp > 0, f"rho={rho_gp:+.4f}")
+    # G × log(D) should be negative (larger = lower G)
+    m2 = re.search(r"G × log\(D_km\).*?rho=([+-]?\d+\.\d+)", txt)
+    if m2:
+        rho_gd = float(m2.group(1))
+        check("37 rho(G, logD) < 0", rho_gd < 0, f"rho={rho_gd:+.4f}")
+    # Partial r(G, logD | logP_V) should be negative (size effect persists)
+    m3 = re.search(r"r\(G, log_D.*?log_pV\) = ([+-]?\d+\.\d+)", txt)
+    if m3:
+        r_gd = float(m3.group(1))
+        check("37 partial r(G, logD | logpV) < 0", r_gd < 0, f"r={r_gd:+.4f}")
+    # v5 should have p_V_final
+    v5 = ROOT / "data" / "final" / "gapc_catalog_v5.parquet"
+    if v5.exists():
+        import pandas as pd
+        df = pd.read_parquet(v5)
+        check("37 v5 has p_V_final", "p_V_final" in df.columns)
+        n_pv = df["p_V_final"].notna().sum()
+        check("37 p_V_final ≥ 40K", n_pv >= 40_000, f"n={n_pv:,}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 38 — Rotation × G
+# ─────────────────────────────────────────────────────────────
+def test_38():
+    print("\n── Step 38: Rotation × G ──")
+    log = ROOT / "logs" / "38_rotation_weathering_stats.txt"
+    plt = ROOT / "plots" / "38_rotation_weathering.png"
+    check("38 log exists", log.exists())
+    check("38 plot exists", plt.exists())
+    if not log.exists():
+        return
+    txt = log.read_text()
+    import re
+    # Period column should be rot_period_best
+    check("38 uses rot_period_best", "rot_period_best" in txt)
+    # rho(G, logP) should be small (< 0.1 in absolute value)
+    m = re.search(r"rho\(G, logP\) all:.*?([+-]?\d+\.\d+)", txt)
+    if m:
+        rho = float(m.group(1))
+        check("38 |rho(G, logP)| < 0.1 (rotation not primary driver)",
+              abs(rho) < 0.1, f"rho={rho:+.4f}")
+    # Partial r(G, logD | logP) should be negative (size still dominant)
+    m2 = re.search(r"Partial r\(G, logD \| logP\): ([+-]?\d+\.\d+)", txt)
+    if m2:
+        r_gd = float(m2.group(1))
+        check("38 partial r(G, logD | logP) < 0", r_gd < 0, f"r={r_gd:+.4f}")
+    # G fast rotators (P<4h) median should be available
+    m3 = re.search(r"G fast \(P<4h\): median=(\d+\.\d+)", txt)
+    if m3:
+        g_fast = float(m3.group(1))
+        check("38 G fast rotators in sane range (0.05–0.4)", 0.05 < g_fast < 0.4,
+              f"median={g_fast:.4f}")
+
+
+# ─────────────────────────────────────────────────────────────
 # Runner
 # ─────────────────────────────────────────────────────────────
 def main():
@@ -888,6 +960,7 @@ def main():
                test_14, test_15, test_16, test_17, test_18,
                test_21b, test_22b, test_24b, test_26, test_27, test_28, test_29,
                test_30, test_33, test_34, test_35, test_36,
+               test_37, test_38,
                test_cross_consistency]:
         try:
             fn()
