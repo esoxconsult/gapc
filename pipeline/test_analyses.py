@@ -11,7 +11,7 @@ Tests cover:
   3. Scientific sanity (known properties, expected orderings)
   4. Cross-consistency between analysis steps
 
-Steps covered: 09–18, 21b, 22b, 24b, 26, 27, 28, 29
+Steps covered: 09–18, 21b, 22b, 24b, 26, 27, 28, 29, 30
 """
 
 import sys
@@ -578,6 +578,57 @@ def test_29():
 
 
 # ─────────────────────────────────────────────────────────────
+# Step 30 — HG1G2 × taxonomy (Penttilä+2016 comparison)
+# ─────────────────────────────────────────────────────────────
+def test_30():
+    print("\n── Step 30: HG1G2 × taxonomy (Penttilä+2016) ──")
+    log = ROOT / "logs" / "30_hg1g2_taxonomy_stats.txt"
+    if not check("30 log exists", log.exists()):
+        return
+    txt = log.read_text()
+    check("30 plot exists", (ROOT / "plots" / "30_hg1g2_taxonomy.png").exists())
+
+    for line in txt.split("\n"):
+        if line.startswith("n_hg1g2_total:"):
+            try:
+                n = int(line.split(":")[1].replace(",", "").strip())
+                check("30 n_hg1g2 > 5000", n > 5_000, f"n={n:,}")
+            except (IndexError, ValueError):
+                check("30 n_hg1g2 parseable", False)
+            break
+
+    for line in txt.split("\n"):
+        if line.startswith("n_with_taxonomy:"):
+            try:
+                n = int(line.split(":")[1].replace(",", "").strip())
+                check("30 GASP taxonomy > 500", n > 500, f"n={n:,}")
+            except (IndexError, ValueError):
+                check("30 taxonomy count parseable", False)
+            break
+
+    for line in txt.split("\n"):
+        if line.startswith("G_pred_median"):
+            try:
+                med = float(line.split(":")[1].strip())
+                check("30 G_pred median in [0.1, 0.4]", 0.1 < med < 0.4,
+                      f"median={med:.4f}")
+            except (IndexError, ValueError):
+                check("30 G_pred parseable", False)
+            break
+
+    # KW p > 0.05 expected: Gaia phase range too narrow to separate classes
+    for line in txt.split("\n"):
+        if line.startswith("KW_G1_across_classes:"):
+            try:
+                p_kw = float(line.split("p=")[1].strip())
+                check("30 KW p > 0.05 (G1/G2 degenerate — expected)",
+                      p_kw > 0.05, f"p={p_kw:.2e}")
+            except (IndexError, ValueError):
+                check("30 KW p parseable", False)
+            break
+
+
+# ─────────────────────────────────────────────────────────────
 # Step 28 — ZTF cross-calibration (Mahlke+2021)
 # ─────────────────────────────────────────────────────────────
 def test_28():
@@ -687,7 +738,7 @@ def main():
     for fn in [test_09, test_10, test_11, test_12, test_13,
                test_14, test_15, test_16, test_17, test_18,
                test_21b, test_22b, test_24b, test_26, test_27, test_28, test_29,
-               test_cross_consistency]:
+               test_30, test_cross_consistency]:
         try:
             fn()
         except Exception as e:
