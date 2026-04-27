@@ -11,7 +11,7 @@ Tests cover:
   3. Scientific sanity (known properties, expected orderings)
   4. Cross-consistency between analysis steps
 
-Steps covered: 09–18, 21b, 22b, 24b, 26, 27, 28, 29, 30
+Steps covered: 09–18, 21b, 22b, 24b, 26, 27, 28, 29, 30, 33, 34, 35, 36
 """
 
 import sys
@@ -728,6 +728,155 @@ def test_cross_consistency():
 
 
 # ─────────────────────────────────────────────────────────────
+# Step 33 — LCDB integration
+# ─────────────────────────────────────────────────────────────
+def test_33():
+    print("\n── Step 33: LCDB rotation periods ──")
+    v5 = ROOT / "data" / "final" / "gapc_catalog_v5.parquet"
+    log = ROOT / "logs" / "33_lcdb_integration_stats.txt"
+    check("33 v5 exists",  v5.exists())
+    check("33 log exists", log.exists())
+    if not v5.exists():
+        return
+    df = load(v5)
+    for col in ("lcdb_period_h", "lcdb_U_qual", "lcdb_binary",
+                "rot_period_best", "rot_period_source"):
+        check(f"33 v5 has {col}", col in df.columns)
+    n_per  = df["lcdb_period_h"].notna().sum()
+    n_best = df["rot_period_best"].notna().sum()
+    check("33 LCDB periods ≥ 10K", n_per >= 10_000,
+          f"n={n_per:,}")
+    check("33 rot_period_best ≥ LCDB (Durech+LCDB combined)",
+          n_best >= n_per, f"best={n_best:,} lcdb={n_per:,}")
+    # lcdb_binary must be bool (no NaN)
+    check("33 lcdb_binary no NaN", df["lcdb_binary"].notna().all())
+    # Period range sanity
+    p = df["rot_period_best"].dropna()
+    check("33 period range sane (0.01–5000 h)",
+          (p > 0.01).all() and (p < 5000).all(),
+          f"{p.min():.3f}–{p.max():.1f} h")
+    # Kalliope (#22) should be binary
+    kal = df[df["number_mp"] == 22]
+    if len(kal) == 1:
+        check("33 Kalliope lcdb_binary=True",
+              bool(kal["lcdb_binary"].iloc[0]))
+    # G for binaries should be higher than for non-binaries
+    g_bin  = df[df["lcdb_binary"] == True]["G"].dropna()
+    g_sing = df[df["lcdb_binary"] == False]["G"].dropna()
+    if len(g_bin) >= 10 and len(g_sing) >= 10:
+        check("33 G(binary) > G(non-binary)",
+              g_bin.median() > g_sing.median(),
+              f"binary={g_bin.median():.4f}  non-binary={g_sing.median():.4f}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 34 — Spectral taxonomy
+# ─────────────────────────────────────────────────────────────
+def test_34():
+    print("\n── Step 34: Spectral taxonomy ──")
+    v5  = ROOT / "data" / "final" / "gapc_catalog_v5.parquet"
+    log = ROOT / "logs" / "34_spectral_taxonomy_stats.txt"
+    check("34 v5 exists",  v5.exists())
+    check("34 log exists", log.exists())
+    if not v5.exists():
+        return
+    df = load(v5)
+    for col in ("spectral_class_BD", "spectral_class_Tholen",
+                "spectral_class_Bus", "spectral_class_best"):
+        check(f"34 v5 has {col}", col in df.columns)
+    n_best = df["spectral_class_best"].notna().sum()
+    check("34 spectral_class_best ≥ 500", n_best >= 500,
+          f"n={n_best:,}")
+    # Bus-DeMeo coverage ≥ 200 (PDS has 371 classified, subset in GAPC)
+    n_bd = df["spectral_class_BD"].notna().sum()
+    check("34 Bus-DeMeo ≥ 200", n_bd >= 200, f"n={n_bd:,}")
+    # Known taxonomy: Vesta (#4) = V-type
+    vesta = df[df["number_mp"] == 4]
+    if len(vesta) == 1 and vesta["spectral_class_BD"].notna().any():
+        cls = str(vesta["spectral_class_BD"].iloc[0])
+        check("34 Vesta spectral_class_BD = V", cls == "V", f"got={cls}")
+    # G ordering by spectral class: S > C (scientifically expected)
+    s_g = df[df["spectral_class_best"].astype(str).str.startswith("S")]["G"].dropna()
+    c_g = df[df["spectral_class_best"].astype(str).str.startswith("C")]["G"].dropna()
+    if len(s_g) >= 10 and len(c_g) >= 10:
+        check("34 G(S-type) > G(C-type) from spectral",
+              s_g.median() > c_g.median(),
+              f"S={s_g.median():.4f}  C={c_g.median():.4f}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 35 — Pravec binaries
+# ─────────────────────────────────────────────────────────────
+def test_35():
+    print("\n── Step 35: Pravec binary catalog ──")
+    v5  = ROOT / "data" / "final" / "gapc_catalog_v5.parquet"
+    log = ROOT / "logs" / "35_pravec_binaries_stats.txt"
+    check("35 v5 exists",  v5.exists())
+    check("35 log exists", log.exists())
+    if not v5.exists():
+        return
+    df = load(v5)
+    for col in ("pravec_binary", "binary_known"):
+        check(f"35 v5 has {col}", col in df.columns)
+    # binary_known covers all rows (no NaN)
+    check("35 binary_known no NaN", df["binary_known"].notna().all())
+    n_prav = df["pravec_binary"].sum()
+    n_comb = df["binary_known"].sum()
+    check("35 Pravec binaries ≥ 100", n_prav >= 100, f"n={n_prav:,}")
+    check("35 combined ≥ Pravec",     n_comb >= n_prav,
+          f"combined={n_comb:,}  pravec={n_prav:,}")
+    # Kalliope (#22) is a known binary
+    kal = df[df["number_mp"] == 22]
+    if len(kal) == 1:
+        check("35 Kalliope pravec_binary=True",
+              bool(kal["pravec_binary"].iloc[0]))
+    # G binary > G non-binary
+    g_bin  = df[df["binary_known"] & df["G"].notna()]["G"]
+    g_sing = df[~df["binary_known"] & df["G"].notna()]["G"]
+    if len(g_bin) >= 10 and len(g_sing) >= 10:
+        check("35 G(binary) > G(non-binary)",
+              g_bin.median() > g_sing.median(),
+              f"binary={g_bin.median():.4f}  non-binary={g_sing.median():.4f}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 36 — SDSS MOC4 colors
+# ─────────────────────────────────────────────────────────────
+def test_36():
+    print("\n── Step 36: SDSS MOC4 colors ──")
+    v5  = ROOT / "data" / "final" / "gapc_catalog_v5.parquet"
+    log = ROOT / "logs" / "36_sdss_colors_stats.txt"
+    check("36 v5 exists",  v5.exists())
+    check("36 log exists", log.exists())
+    if not v5.exists():
+        return
+    df = load(v5)
+    for col in ("sdss_a_star", "sdss_g_r", "sdss_i_z", "sdss_complex"):
+        check(f"36 v5 has {col}", col in df.columns)
+    n_sdss = df["sdss_a_star"].notna().sum()
+    check("36 SDSS coverage ≥ 20K", n_sdss >= 20_000, f"n={n_sdss:,}")
+    # a* range (excluding wild outliers): median should be ~0.05–0.15
+    a = df["sdss_a_star"].dropna()
+    a_med = a.median()
+    check("36 a* median in sane range (−0.1 to 0.5)",
+          -0.1 < a_med < 0.5, f"median={a_med:.4f}")
+    # S-complex has higher G than C-complex
+    g_s = df[(df["sdss_complex"] == "S") & df["G"].notna()]["G"]
+    g_c = df[(df["sdss_complex"] == "C") & df["G"].notna()]["G"]
+    if len(g_s) >= 100 and len(g_c) >= 100:
+        check("36 G(S-complex) > G(C-complex)",
+              g_s.median() > g_c.median(),
+              f"S={g_s.median():.4f}  C={g_c.median():.4f}")
+    # rho(G, a*) should be positive and significant (a* ↑ → S-type → G ↑)
+    from scipy.stats import spearmanr
+    ga = df[df["sdss_a_star"].notna() & df["G"].notna()]
+    if len(ga) >= 100:
+        rho, p_val = spearmanr(ga["G"], ga["sdss_a_star"])
+        check("36 rho(G, a*) > 0 (S-types have higher G)",
+              rho > 0, f"rho={rho:+.4f}  p={p_val:.2e}")
+
+
+# ─────────────────────────────────────────────────────────────
 # Runner
 # ─────────────────────────────────────────────────────────────
 def main():
@@ -738,7 +887,8 @@ def main():
     for fn in [test_09, test_10, test_11, test_12, test_13,
                test_14, test_15, test_16, test_17, test_18,
                test_21b, test_22b, test_24b, test_26, test_27, test_28, test_29,
-               test_30, test_cross_consistency]:
+               test_30, test_33, test_34, test_35, test_36,
+               test_cross_consistency]:
         try:
             fn()
         except Exception as e:
