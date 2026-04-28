@@ -1,19 +1,23 @@
 """
 53_thermal_inertia_G.py
-GAPC — G × thermal inertia (NEOWISE/TPM).
+GAPC — G × NEATM beaming parameter eta (thermal proxy).
 
-Thermal inertia (Gamma, J m^-2 s^-0.5 K^-1) is a direct physical measure of
-surface properties: grain size, porosity, compaction. Low Gamma = fine regolith;
-high Gamma = bare rock or coarse grains.
+The NEATM beaming parameter eta from WISE/NEOWISE (Masiero+2017, Mainzer+2011)
+is an inverse proxy for thermal inertia: high eta → more thermal lag → higher
+thermal inertia (coarse/rocky surface); low eta ~ 1 → low thermal inertia
+(fine regolith, Lambertian).
 
-If G correlates with thermal inertia AFTER controlling for size, it means the
-phase-curve slope encodes real surface texture — the physical interpretation of
-the space-weathering G-size signal.
+If G correlates with eta after controlling for size, it means the phase-curve
+slope encodes real surface texture — connecting the G-size signal to physical
+surface properties.
 
-Data sources (downloaded from VizieR):
-  1. Hanuš+2018 J/A+A/612/A142   — 135 objects, thermophysical models
-  2. Ali-Lagoa+2018 J/A+A/617/A92 — NEOWISE thermal inertia
-  3. Delbo+2015 compilation        — various sources
+Also attempts to download Hanuš+2018 (J/A+A/612/A142) true thermal inertia
+values if accessible from VizieR.
+
+Inputs:
+  data/raw/neowise_masiero2017.csv   — eta for ~7,000 objects
+  data/raw/neowise_mainzer2011_wise.csv — eta for more objects
+  data/final/gapc_catalog_v8.parquet
 
 Outputs:
   plots/53_thermal_inertia_G.png
@@ -32,20 +36,14 @@ from scipy.stats import rankdata
 
 warnings.filterwarnings("ignore")
 
-ROOT      = Path(__file__).resolve().parents[1]
-V8_PATH   = ROOT / "data" / "final" / "gapc_catalog_v8.parquet"
-RAW_DIR   = ROOT / "data" / "raw"
-PLOT_DIR  = ROOT / "plots"
-LOG_DIR   = ROOT / "logs"
+ROOT     = Path(__file__).resolve().parents[1]
+V8_PATH  = ROOT / "data" / "final" / "gapc_catalog_v8.parquet"
+RAW_DIR  = ROOT / "data" / "raw"
+PLOT_DIR = ROOT / "plots"
+LOG_DIR  = ROOT / "logs"
 
 PLOT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-CATALOGS = [
-    ("J/A+A/612/A142", "hanus2018_ti.parquet",  "Hanuš+2018"),
-    ("J/A+A/617/A92",  "alilagoa2018_ti.parquet", "Ali-Lagoa+2018"),
-    ("J/A+A/638/A85",  "alilagoa2020_ti.parquet", "Ali-Lagoa+2020"),
-]
 
 
 def partial_spearman(x, y, z):
@@ -55,219 +53,242 @@ def partial_spearman(x, y, z):
     return pearsonr(xr - bx * zr, yr - by * zr)[0]
 
 
-def try_download(vizier_id, cache_path, label):
-    """Try to download a VizieR catalog, return DataFrame or None."""
-    if cache_path.exists():
-        print(f"  Loading cached: {cache_path.name}")
-        return pd.read_parquet(cache_path)
-    try:
-        from astroquery.vizier import Vizier
-        print(f"  Downloading {label} ({vizier_id}) ...")
-        v = Vizier(columns=["**"], row_limit=-1)
-        tables = v.get_catalogs(vizier_id)
-        if not tables:
-            print(f"    No tables returned"); return None
-        print(f"    Tables: {list(tables.keys())}")
-        dfs = []
-        for key in tables.keys():
-            t = tables[key].to_pandas()
-            print(f"      {key}: {len(t):,} rows  cols={list(t.columns[:8])}")
-            dfs.append(t)
-        df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
-        df.to_parquet(cache_path, index=False)
+def try_hanus2018():
+    """Try to download Hanuš+2018 thermal inertia catalog with timeout."""
+    cache = RAW_DIR / "hanus2018_ti.parquet"
+    if cache.exists():
+        df = pd.read_parquet(cache)
+        print(f"  Hanuš+2018: loaded from cache, {len(df):,} rows")
         return df
+    try:
+        import signal
+        def _timeout(sig, frame):
+            raise TimeoutError
+        signal.signal(signal.SIGALRM, _timeout)
+        signal.alarm(30)
+        from astroquery.vizier import Vizier
+        v = Vizier(columns=["**"], row_limit=-1)
+        tables = v.get_catalogs("J/A+A/612/A142")
+        signal.alarm(0)
+        if tables:
+            df = tables[list(tables.keys())[0]].to_pandas()
+            print(f"  Hanuš+2018: downloaded, {len(df):,} rows  cols={list(df.columns[:10])}")
+            df.to_parquet(cache, index=False)
+            return df
     except Exception as e:
-        print(f"    Download failed: {e}"); return None
-
-
-def find_ti_column(df):
-    """Find thermal inertia column in a DataFrame."""
-    ti_names = ["TI", "Gamma", "gamma", "ThermalInertia", "ti",
-                "Inertia", "inertia", "Gamma_ti", "TI_JM2"]
-    for c in df.columns:
-        if any(n.lower() in c.lower() for n in ti_names):
-            return c
-    return None
-
-
-def find_num_column(df):
-    """Find asteroid number column."""
-    candidates = ["Num", "num", "Number", "number", "Asteroid",
-                  "asteroid", "Object", "_Num", "ID", "AstNum"]
-    for c in df.columns:
-        if c in candidates or c.lower() in [x.lower() for x in candidates]:
-            return c
-    # Try first integer-like column
-    for c in df.columns:
-        try:
-            vals = pd.to_numeric(df[c], errors="coerce").dropna()
-            if len(vals) > len(df) * 0.5 and vals.min() >= 1:
-                return c
-        except Exception:
-            pass
+        print(f"  Hanuš+2018: not available ({type(e).__name__})")
     return None
 
 
 def main():
     print("\n" + "=" * 65)
-    print("  GAPC Step 53 — G × thermal inertia")
+    print("  GAPC Step 53 — G × thermal proxy (NEATM eta + Hanuš TI)")
     print("=" * 65)
 
     gapc = pd.read_parquet(V8_PATH)
     print(f"\n  v8: {len(gapc):,} rows")
 
-    # ── Download / load thermal inertia catalogs ──────────────────────────────
-    all_ti = []
-    for vizier_id, fname, label in CATALOGS:
-        cache = RAW_DIR / fname
-        df = try_download(vizier_id, cache, label)
-        if df is None:
-            continue
+    # ── Load NEOWISE eta ──────────────────────────────────────────────────────
+    eta_dfs = []
 
-        num_col = find_num_column(df)
-        ti_col  = find_ti_column(df)
-        print(f"\n  {label}: {len(df):,} rows")
-        print(f"    All cols: {list(df.columns)}")
-        print(f"    Num col: {num_col}  TI col: {ti_col}")
-
+    # Masiero+2017
+    m17_path = RAW_DIR / "neowise_masiero2017.csv"
+    if m17_path.exists():
+        m17 = pd.read_csv(m17_path)
+        print(f"  Masiero+2017: {len(m17):,} rows  cols={list(m17.columns)}")
+        # Name column is asteroid number as string
+        num_col = next((c for c in m17.columns
+                        if c.lower() in ("name","num","number","mpc","recno")), None)
         if num_col is None:
-            print(f"    Cannot find asteroid number column — skipping"); continue
+            num_col = m17.columns[1]  # typically 'Name'
+        m17 = m17.rename(columns={num_col: "number_mp"})
+        m17["number_mp"] = pd.to_numeric(m17["number_mp"], errors="coerce")
+        m17 = m17.dropna(subset=["number_mp"]).copy()
+        m17["number_mp"] = m17["number_mp"].astype(int)
+        if "eta" in m17.columns:
+            m17["eta"] = pd.to_numeric(m17["eta"], errors="coerce")
+            valid = m17[m17["eta"].notna() & (m17["eta"] > 0) & (m17["eta"] < 10)]
+            valid = valid.sort_values("eta").drop_duplicates("number_mp", keep="first")
+            valid["eta_source"] = "Masiero+2017"
+            eta_dfs.append(valid[["number_mp","eta","eta_source"]])
+            print(f"    Valid eta: {len(valid):,}  range=[{valid['eta'].min():.2f},{valid['eta'].max():.2f}]")
 
-        df2 = df.rename(columns={num_col: "number_mp"}).copy()
-        df2["number_mp"] = pd.to_numeric(df2["number_mp"], errors="coerce")
-        df2 = df2[df2["number_mp"].notna()].copy()
-        df2["number_mp"] = df2["number_mp"].astype(int)
-        df2["ti_source"] = label
+    # Mainzer+2011
+    m11_path = RAW_DIR / "neowise_mainzer2011_wise.csv"
+    if m11_path.exists():
+        m11 = pd.read_csv(m11_path)
+        print(f"  Mainzer+2011: {len(m11):,} rows  cols={list(m11.columns)}")
+        num_col = next((c for c in m11.columns
+                        if c.lower() in ("mpc","name","num","number")), None)
+        if num_col:
+            m11 = m11.rename(columns={num_col: "number_mp"})
+            m11["number_mp"] = pd.to_numeric(m11["number_mp"], errors="coerce")
+            m11 = m11.dropna(subset=["number_mp"]).copy()
+            m11["number_mp"] = m11["number_mp"].astype(int)
+            if "eta" in m11.columns:
+                m11["eta"] = pd.to_numeric(m11["eta"], errors="coerce")
+                valid = m11[m11["eta"].notna() & (m11["eta"] > 0) & (m11["eta"] < 10)]
+                valid = valid.sort_values("eta").drop_duplicates("number_mp", keep="first")
+                valid["eta_source"] = "Mainzer+2011"
+                eta_dfs.append(valid[["number_mp","eta","eta_source"]])
+                print(f"    Valid eta: {len(valid):,}  range=[{valid['eta'].min():.2f},{valid['eta'].max():.2f}]")
 
-        if ti_col:
-            df2 = df2.rename(columns={ti_col: "thermal_inertia"})
-            df2["thermal_inertia"] = pd.to_numeric(df2["thermal_inertia"], errors="coerce")
-            valid = df2["thermal_inertia"].notna() & (df2["thermal_inertia"] > 0)
-            print(f"    Valid TI values: {valid.sum():,}")
-            all_ti.append(df2[["number_mp", "thermal_inertia", "ti_source"]])
-        else:
-            # Show all column values to help identify manually
-            print(f"    No TI column found. Sample data:")
-            print(df2.head(3).to_string())
+    if not eta_dfs:
+        print("  No NEOWISE eta data found"); return
 
-    if not all_ti:
-        print("\n  No thermal inertia data obtained from any catalog.")
-        print("  Writing empty log.")
-        with open(LOG_DIR / "53_thermal_inertia_stats.txt", "w") as f:
-            f.write("GAPC Step 53 — G × thermal inertia\n")
-            f.write("No thermal inertia data available from VizieR catalogs\n")
-            f.write("Tried: " + ", ".join(label for _, _, label in CATALOGS) + "\n")
-        return
+    eta_all = pd.concat(eta_dfs, ignore_index=True)
+    eta_all = eta_all.sort_values("eta").drop_duplicates("number_mp", keep="first")
+    print(f"\n  Combined eta catalog: {len(eta_all):,} unique objects")
 
-    # ── Combine and merge ─────────────────────────────────────────────────────
-    ti_combined = pd.concat(all_ti, ignore_index=True)
-    ti_combined = ti_combined.sort_values("thermal_inertia").drop_duplicates(
-        "number_mp", keep="last")  # keep higher TI (more constrained)
-    print(f"\n  Combined TI catalog: {len(ti_combined):,} objects")
-    print(f"  TI range: [{ti_combined['thermal_inertia'].min():.1f}, "
-          f"{ti_combined['thermal_inertia'].max():.1f}]")
-    print(f"  TI median: {ti_combined['thermal_inertia'].median():.1f}")
+    # ── Attempt Hanuš+2018 true thermal inertia ───────────────────────────────
+    print(f"\n  Trying Hanuš+2018 true thermal inertia ...")
+    hanus = try_hanus2018()
+    ti_merged = None
+    if hanus is not None:
+        # Find number and TI columns
+        num_h = next((c for c in hanus.columns
+                      if c.lower() in ("num","number","_num","ast","object")), None)
+        ti_h  = next((c for c in hanus.columns
+                      if "ti" in c.lower() or "gamma" in c.lower()
+                      or "inertia" in c.lower() or "thermal" in c.lower()), None)
+        print(f"    Columns: {list(hanus.columns)}")
+        print(f"    num_col={num_h}  ti_col={ti_h}")
+        if num_h and ti_h:
+            hanus2 = hanus.rename(columns={num_h: "number_mp", ti_h: "thermal_inertia"})
+            hanus2["number_mp"] = pd.to_numeric(hanus2["number_mp"], errors="coerce")
+            hanus2 = hanus2.dropna(subset=["number_mp","thermal_inertia"]).copy()
+            hanus2["number_mp"] = hanus2["number_mp"].astype(int)
+            hanus2 = hanus2.drop_duplicates("number_mp")
+            ti_merged = gapc.merge(hanus2[["number_mp","thermal_inertia"]], on="number_mp")
+            ti_merged = ti_merged[ti_merged["G"].notna() &
+                                  (ti_merged["thermal_inertia"] > 0)].copy()
+            print(f"    TI crossmatch with v8: {len(ti_merged):,} objects")
 
-    merged = gapc.merge(ti_combined, on="number_mp", how="inner")
-    merged = merged[merged["G"].notna() & merged["thermal_inertia"].notna() &
-                    (merged["thermal_inertia"] > 0)].copy()
-    print(f"\n  GAPC × TI crossmatch: {len(merged):,} objects")
+    # ── Merge eta with v8 ─────────────────────────────────────────────────────
+    merged = gapc.merge(eta_all, on="number_mp", how="inner")
+    merged = merged[merged["G"].notna() & merged["eta"].notna()].copy()
+    print(f"\n  GAPC × eta crossmatch: {len(merged):,} objects")
     if len(merged) < 10:
-        print("  Too few matches for analysis"); return
+        print("  Too few matches"); return
 
-    merged["log_TI"] = np.log10(merged["thermal_inertia"])
-    merged["logD"]   = np.log10(merged["D_km"].clip(lower=0.01))
+    merged["log_eta"] = np.log10(merged["eta"])
+    merged["logD"]    = np.log10(merged["D_km"].clip(lower=0.01))
 
-    # ── 1. rho(G, TI) ────────────────────────────────────────────────────────
-    rho_raw, p_raw = spearmanr(merged["G"], merged["log_TI"])
-    print(f"\n  1. rho(G, log_TI) = {rho_raw:+.4f}  p={p_raw:.3e}  n={len(merged):,}")
+    # ── 1. rho(G, eta) ───────────────────────────────────────────────────────
+    rho_raw, p_raw = spearmanr(merged["G"], merged["log_eta"])
+    rho_lin, p_lin = spearmanr(merged["G"], merged["eta"])
+    print(f"\n  1. rho(G, log_eta) = {rho_raw:+.4f}  p={p_raw:.3e}  n={len(merged):,}")
+    print(f"     rho(G, eta)     = {rho_lin:+.4f}  p={p_lin:.3e}")
 
-    # ── 2. Partial r(G, log_TI | logD) ───────────────────────────────────────
-    if merged["D_km"].notna().sum() > 20:
-        sub_d = merged[merged["D_km"].notna() & (merged["D_km"] > 0)]
-        r_part = partial_spearman(sub_d["G"].values,
-                                  sub_d["log_TI"].values,
+    # ── 2. Partial r(G, log_eta | logD) ──────────────────────────────────────
+    sub_d = merged[merged["D_km"].notna() & (merged["D_km"] > 0)].copy()
+    r_part_eta = partial_spearman(sub_d["G"].values,
+                                  sub_d["log_eta"].values,
                                   sub_d["logD"].values)
-        print(f"  2. r(G, log_TI | logD) = {r_part:+.4f}  n={len(sub_d):,}")
-    else:
-        r_part = np.nan
-        print(f"  2. Insufficient D_km data for partial correlation")
+    r_part_D   = partial_spearman(sub_d["G"].values,
+                                  sub_d["logD"].values,
+                                  sub_d["log_eta"].values)
+    print(f"  2. r(G, log_eta | logD) = {r_part_eta:+.4f}  n={len(sub_d):,}")
+    print(f"     r(G, logD | log_eta) = {r_part_D:+.4f}")
 
     # ── 3. By taxonomy ────────────────────────────────────────────────────────
-    print(f"\n  3. rho(G, log_TI) by taxonomy:")
+    print(f"\n  3. rho(G, log_eta) by taxonomy:")
+    tax_colors = {"S": "#e07b39", "C": "#5c85d6", "M": "#8e44ad",
+                  "E": "#e74c3c", "P": "#27ae60"}
     tax_results = {}
-    for t in ["S", "C", "M", "E"]:
+    for t, col in tax_colors.items():
         sub = merged[merged["taxonomy_refined"] == t]
-        if len(sub) < 5:
+        if len(sub) < 10:
             continue
-        rho_t, p_t = spearmanr(sub["G"], sub["log_TI"])
-        print(f"    {t}: rho={rho_t:+.4f}  p={p_t:.3e}  n={len(sub):,}  "
-              f"TI_med={sub['thermal_inertia'].median():.0f}")
-        tax_results[t] = dict(rho=rho_t, p=p_t, n=len(sub),
-                               TI_med=sub["thermal_inertia"].median())
+        rho_t, p_t = spearmanr(sub["G"], sub["log_eta"])
+        r_pt = partial_spearman(sub["G"].values, sub["log_eta"].values,
+                                np.log10(sub["D_km"].clip(0.01)).values)
+        print(f"    {t}: rho={rho_t:+.4f}  p={p_t:.3e}  "
+              f"partial r={r_pt:+.4f}  n={len(sub):,}  "
+              f"eta_med={sub['eta'].median():.2f}")
+        tax_results[t] = dict(rho=rho_t, p=p_t, r_partial=r_pt,
+                               n=len(sub), eta_med=sub["eta"].median(), color=col)
+
+    # ── 4. eta vs size ────────────────────────────────────────────────────────
+    rho_eta_D, p_eta_D = spearmanr(merged["eta"], merged["logD"])
+    print(f"\n  4. rho(eta, logD) = {rho_eta_D:+.4f}  p={p_eta_D:.3e}")
+
+    # ── If true TI available ──────────────────────────────────────────────────
+    if ti_merged is not None and len(ti_merged) >= 10:
+        ti_merged["log_TI"] = np.log10(ti_merged["thermal_inertia"])
+        ti_merged["logD"]   = np.log10(ti_merged["D_km"].clip(0.01))
+        rho_ti, p_ti = spearmanr(ti_merged["G"], ti_merged["log_TI"])
+        r_ti_part = partial_spearman(ti_merged["G"].values,
+                                     ti_merged["log_TI"].values,
+                                     ti_merged["logD"].values)
+        print(f"\n  Hanuš+2018 TI (n={len(ti_merged):,}):")
+        print(f"    rho(G, log_TI) = {rho_ti:+.4f}  p={p_ti:.3e}")
+        print(f"    r(G, log_TI | logD) = {r_ti_part:+.4f}")
 
     # ── Plots ─────────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(2, 2, figsize=(13, 10))
-    fig.suptitle(f"G × thermal inertia  (n={len(merged):,})", fontsize=11)
+    fig.suptitle(f"G × NEATM beaming parameter η  (n={len(merged):,})\n"
+                 f"η ∝ thermal inertia (high η = rocky/coarse surface)",
+                 fontsize=11)
 
-    # G vs log_TI scatter
+    # G vs eta scatter colored by taxonomy
     ax = axes[0, 0]
-    tax_colors = {"S": "#e07b39", "C": "#5c85d6", "M": "#8e44ad",
-                  "E": "#e74c3c", "P": "#27ae60"}
-    for t, col in tax_colors.items():
+    for t, res in tax_results.items():
         sub = merged[merged["taxonomy_refined"] == t]
-        if len(sub) == 0:
-            continue
-        ax.scatter(sub["thermal_inertia"], sub["G"], s=15, alpha=0.5,
-                   color=col, label=f"{t} (n={len(sub)})", rasterized=True)
+        ax.scatter(sub["eta"], sub["G"], s=6, alpha=0.4,
+                   color=res["color"], label=f"{t} (n={res['n']})",
+                   rasterized=True)
     ax.set_xscale("log")
-    ax.set_xlabel("Thermal inertia [J m⁻² s⁻⁰·⁵ K⁻¹]")
+    ax.set_xlabel("η (NEATM beaming parameter)")
     ax.set_ylabel("G")
-    ax.set_title(f"G vs TI  rho={rho_raw:+.3f}  partial r={r_part:+.3f}")
-    ax.legend(fontsize=8)
+    ax.set_title(f"G vs η  rho={rho_raw:+.3f}  partial r={r_part_eta:+.3f}")
+    ax.legend(fontsize=8, markerscale=2)
     ax.grid(alpha=0.2)
 
-    # G vs logD colored by log_TI
+    # G vs D colored by log_eta
     ax = axes[0, 1]
     sc = ax.scatter(merged["D_km"].clip(lower=0.1),
-                    merged["G"], s=10, alpha=0.5,
-                    c=merged["log_TI"], cmap="plasma", rasterized=True)
-    plt.colorbar(sc, ax=ax, label="log TI")
+                    merged["G"], s=6, alpha=0.4,
+                    c=merged["log_eta"], cmap="plasma", rasterized=True)
+    plt.colorbar(sc, ax=ax, label="log η")
     ax.set_xscale("log")
     ax.set_xlabel("D [km]"); ax.set_ylabel("G")
-    ax.set_title("G vs D, colored by thermal inertia")
+    ax.set_title(f"G vs D, colored by η\n"
+                 f"r(G,logD|logη)={r_part_D:+.3f}")
     ax.grid(alpha=0.2)
 
-    # TI distribution by taxonomy
+    # eta vs D
     ax = axes[1, 0]
-    for t, col in tax_colors.items():
+    for t, res in tax_results.items():
         sub = merged[merged["taxonomy_refined"] == t]
-        if len(sub) < 3:
-            continue
-        ti_r = (merged["thermal_inertia"].quantile(0.01),
-                merged["thermal_inertia"].quantile(0.99))
-        bins_ti = np.logspace(np.log10(max(ti_r[0], 1)), np.log10(ti_r[1]), 30)
-        ax.hist(sub["thermal_inertia"].clip(*ti_r), bins=bins_ti,
-                histtype="step", lw=1.5, color=col, label=t, density=True)
+        ax.scatter(sub["D_km"].clip(lower=0.1), sub["eta"], s=4, alpha=0.3,
+                   color=res["color"], label=t, rasterized=True)
     ax.set_xscale("log")
-    ax.set_xlabel("Thermal inertia"); ax.set_ylabel("Density")
-    ax.set_title("TI distribution by taxonomy")
-    ax.legend(fontsize=8)
+    ax.set_yscale("log")
+    ax.set_xlabel("D [km]"); ax.set_ylabel("η")
+    ax.set_title(f"η vs D  rho={rho_eta_D:+.3f}")
+    ax.legend(fontsize=8, markerscale=2)
     ax.grid(alpha=0.2)
 
-    # rho by taxonomy bar
+    # Partial r by taxonomy
     ax = axes[1, 1]
     if tax_results:
         taxa_t = list(tax_results.keys())
         rhos_t = [tax_results[t]["rho"] for t in taxa_t]
-        ns_t   = [tax_results[t]["n"]   for t in taxa_t]
-        colors_t = [tax_colors.get(t, "gray") for t in taxa_t]
-        ax.bar(range(len(taxa_t)), rhos_t, color=colors_t, alpha=0.8)
-        ax.set_xticks(range(len(taxa_t)))
-        ax.set_xticklabels([f"{t}\n(n={n})" for t, n in zip(taxa_t, ns_t)])
+        rpar_t = [tax_results[t]["r_partial"] for t in taxa_t]
+        ns_t   = [tax_results[t]["n"] for t in taxa_t]
+        cols_t = [tax_results[t]["color"] for t in taxa_t]
+        x = np.arange(len(taxa_t))
+        w = 0.35
+        ax.bar(x - w/2, rhos_t, w, label="rho(G,logη)", color=cols_t, alpha=0.8)
+        ax.bar(x + w/2, rpar_t, w, label="partial r(G,logη|logD)",
+               color=cols_t, alpha=0.4, hatch="//")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{t}\nn={n}" for t, n in zip(taxa_t, ns_t)])
         ax.axhline(0, color="k", lw=0.8)
-        ax.set_ylabel("Spearman rho(G, log_TI)")
-        ax.set_title("G × thermal inertia by taxonomy")
+        ax.set_ylabel("Spearman rho / partial r")
+        ax.set_title("G × η by taxonomy (solid=raw, hatch=size-controlled)")
+        ax.legend(fontsize=8)
         ax.grid(alpha=0.2, axis="y")
 
     fig.tight_layout()
@@ -276,15 +297,21 @@ def main():
     print(f"\n  Plot → plots/53_thermal_inertia_G.png")
 
     with open(LOG_DIR / "53_thermal_inertia_stats.txt", "w") as f:
-        f.write("GAPC Step 53 — G × thermal inertia\n")
+        f.write("GAPC Step 53 — G × NEATM beaming parameter η\n")
         f.write("=" * 60 + "\n")
         f.write(f"n crossmatch: {len(merged):,}\n")
-        f.write(f"rho(G, log_TI) = {rho_raw:+.4f}  p={p_raw:.3e}\n")
-        f.write(f"r(G, log_TI | logD) = {r_part:+.4f}\n\n")
+        f.write(f"rho(G, log_eta) = {rho_raw:+.4f}  p={p_raw:.3e}\n")
+        f.write(f"r(G, log_eta | logD) = {r_part_eta:+.4f}\n")
+        f.write(f"r(G, logD | log_eta) = {r_part_D:+.4f}\n")
+        f.write(f"rho(eta, logD) = {rho_eta_D:+.4f}  p={p_eta_D:.3e}\n\n")
         f.write("By taxonomy:\n")
-        for t, r in tax_results.items():
-            f.write(f"  {t}: rho={r['rho']:+.4f}  p={r['p']:.3e}  "
-                    f"n={r['n']}  TI_med={r['TI_med']:.0f}\n")
+        for t, res in tax_results.items():
+            f.write(f"  {t}: rho={res['rho']:+.4f}  p={res['p']:.3e}  "
+                    f"partial_r={res['r_partial']:+.4f}  n={res['n']}\n")
+        if ti_merged is not None and len(ti_merged) >= 10:
+            f.write(f"\nHanus+2018 true TI (n={len(ti_merged):,}):\n")
+            f.write(f"  rho(G, log_TI) = {rho_ti:+.4f}  p={p_ti:.3e}\n")
+            f.write(f"  r(G, log_TI | logD) = {r_ti_part:+.4f}\n")
     print(f"  Log  → logs/53_thermal_inertia_stats.txt\n")
 
 
