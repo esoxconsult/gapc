@@ -60,16 +60,15 @@ def try_hanus2018():
         df = pd.read_parquet(cache)
         print(f"  Hanuš+2018: loaded from cache, {len(df):,} rows")
         return df
+    import signal
+    def _timeout(sig, frame):
+        raise TimeoutError("VizieR timeout")
     try:
-        import signal
-        def _timeout(sig, frame):
-            raise TimeoutError
         signal.signal(signal.SIGALRM, _timeout)
-        signal.alarm(30)
+        signal.alarm(25)
         from astroquery.vizier import Vizier
         v = Vizier(columns=["**"], row_limit=-1)
         tables = v.get_catalogs("J/A+A/612/A142")
-        signal.alarm(0)
         if tables:
             df = tables[list(tables.keys())[0]].to_pandas()
             print(f"  Hanuš+2018: downloaded, {len(df):,} rows  cols={list(df.columns[:10])}")
@@ -77,6 +76,9 @@ def try_hanus2018():
             return df
     except Exception as e:
         print(f"  Hanuš+2018: not available ({type(e).__name__})")
+    finally:
+        signal.alarm(0)   # always cancel alarm before returning
+        signal.signal(signal.SIGALRM, signal.SIG_DFL)
     return None
 
 
