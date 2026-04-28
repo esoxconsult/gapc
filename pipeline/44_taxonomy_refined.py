@@ -82,9 +82,9 @@ def main():
     gapc = pd.read_parquet(V7_PATH)
     print(f"\n  v7 loaded: {len(gapc):,} rows, {len(gapc.columns)} cols")
 
-    # ── Initialise output columns ──────────────────────────────────────────────
-    gapc["taxonomy_refined"] = np.nan
-    gapc["taxonomy_source"]  = np.nan
+    # ── Initialise output columns (object dtype to accept strings) ────────────
+    gapc["taxonomy_refined"] = pd.array([pd.NA] * len(gapc), dtype="object")
+    gapc["taxonomy_source"]  = pd.array([pd.NA] * len(gapc), dtype="object")
 
     # ── Priority 1: Spectral PDS labels (Bus-DeMeo > Bus > Tholen) ────────────
     spec_col = "spectral_class_best"
