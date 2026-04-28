@@ -139,11 +139,13 @@ def main():
     barrier = base[base["rot_period_best"] < SPIN_BARRIER]
     normal  = base[(base["rot_period_best"] >= SPIN_BARRIER) &
                    (base["rot_period_best"] < FAST_CUT)]
+    g_bar = barrier["G"].median() if len(barrier) > 0 else np.nan
+    d_bar = barrier["D_km"].median() if len(barrier) > 0 else np.nan
+    g_nor = normal["G"].median() if len(normal) > 0 else np.nan
     print(f"\n  5. Spin barrier (<{SPIN_BARRIER}h): n={len(barrier):,}  "
-          f"G_med={barrier['G'].median():.4f if len(barrier)>0 else np.nan:.4f}  "
-          f"D_med={barrier['D_km'].median():.1f if len(barrier)>0 else np.nan:.1f} km")
+          f"G_med={g_bar:.4f}  D_med={d_bar:.1f} km")
     print(f"     Fast non-barrier ({SPIN_BARRIER}-{FAST_CUT}h): n={len(normal):,}  "
-          f"G_med={normal['G'].median():.4f if len(normal)>0 else np.nan:.4f}")
+          f"G_med={g_nor:.4f}")
 
     # ── By taxonomy ───────────────────────────────────────────────────────────
     print(f"\n  6. Partial r(G, logP | logD) by taxonomy:")
