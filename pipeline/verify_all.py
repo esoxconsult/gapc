@@ -30,8 +30,9 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr, mannwhitneyu, pearsonr, curve_fit
+from scipy.stats import spearmanr, mannwhitneyu, pearsonr
 from scipy.stats import rankdata
+from scipy.optimize import curve_fit
 
 warnings.filterwarnings("ignore")
 
