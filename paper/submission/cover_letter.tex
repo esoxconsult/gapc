@@ -1,0 +1,94 @@
+%% cover_letter.tex — A&A submission cover letter
+%% Compile: pdflatex cover_letter.tex
+\documentclass[12pt,a4paper]{letter}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2.8cm, right=2.8cm]{geometry}
+\usepackage{hyperref}
+
+\signature{Werner Scheibenpflug \\
+           Independent Researcher, Vienna, Austria \\
+           \texttt{wscheibenpflug@gmail.com} \\
+           ORCID: 0009-0008-6450-479X}
+
+\address{Werner Scheibenpflug \\
+         Independent Researcher \\
+         Vienna, Austria \\
+         \texttt{wscheibenpflug@gmail.com}}
+
+\date{\today}
+
+\begin{document}
+
+\begin{letter}{The Editorial Board \\
+               Astronomy \& Astrophysics \\
+               EDP Sciences}
+
+\opening{Dear Editor,}
+
+I submit for consideration as a Regular Paper in \textit{Astronomy \&
+Astrophysics}:
+
+\medskip
+\begin{center}
+\textbf{``GAPC: A Catalog of HG Phase Curve Parameters for 128,885\\
+Main-Belt Asteroids from Gaia DR3 Sparse Photometry''}
+\end{center}
+\medskip
+
+GAPC is an open-source, reproducible catalog derived from Gaia DR3
+sparse photometry, cross-matched with ten external datasets (NEOWISE,
+LCDB, Bus-DeMeo/PDS taxonomy, Pravec binaries, SDSS MOC4, DAMIT,
+Goffin masses, GASP spectra, AstDys proper elements, MPC). The catalog
+contains 128,885 objects and 162 columns; an independent verification
+script confirms 75/75 checks pass on the released v8.
+
+\medskip
+\textbf{Main scientific results:}
+
+\begin{enumerate}
+
+\item \textbf{Composition-independent size law.} The partial correlation
+$r(G,\log D \mid \log p_V) \approx -0.28$ is consistent across all
+taxonomy complexes (S, M, E, P, C) and is reproduced within asteroid
+families (Flora $n=8{,}168$; Koronis $n=1{,}039$; Eunomia $n=4{,}963$),
+pointing to regolith depth as the physical driver rather than
+mineralogy.
+
+\item \textbf{Binary $G$-excess.} Known binary asteroids (Pravec
+catalog, $n=384$) show a statistically significant $G$-excess after size
+control ($p = 2.2 \times 10^{-11}$), providing a new observational
+constraint for binary formation and tidal evolution models.
+
+\item \textbf{Phase curves and spectra are orthogonal observables.}
+Gaia 16-band reflectance spectra achieve $R^2 \approx 0$ in predicting
+$G$ beyond taxonomy and size, confirming that phase curve shape encodes
+sub-visual surface texture (grain size, porosity) not accessible through
+reflectance spectroscopy.
+
+\end{enumerate}
+
+Several physically motivated correlations --- family age, rotation
+period, NEATM thermal inertia, and C-complex hydration --- are found to
+be non-significant and are reported explicitly to avoid publication bias.
+
+\medskip
+The catalog is available on Zenodo (DOI:
+\href{https://doi.org/10.5281/zenodo.19858420}{10.5281/zenodo.19858420})
+under MIT license. The full 54-step pipeline is included for
+reproducibility.
+
+A companion paper (GASP, Scheibenpflug 2026, \textit{Research Notes of
+the AAS}, vol.\ 10, p.\ 87, DOI:
+\href{https://doi.org/10.3847/2515-5172/ae5e45}{10.3847/2515-5172/ae5e45})
+describing the spectral catalog used in result~(3) has been published.
+
+\medskip
+I declare no conflicts of interest. This manuscript has not been
+submitted elsewhere and is not under consideration at any other journal.
+
+\closing{Sincerely,}
+
+\end{letter}
+\end{document}
