@@ -107,7 +107,7 @@ sparse cadence does not routinely provide.
 
 \gaia Data Release 3 \citep{prusti2016} includes the \texttt{sso\_observation}
 table, containing 823\,MB of multi-epoch photometry for approximately
-150,000 solar system objects.  \citet{galluccio2022} published the first
+150,000 solar system objects.  \citet{galluccio2023} published the first
 systematic treatment of these data, presenting phase curves and $HG$
 parameters for the DR3 sample.  However, no cross-matched catalog existed
 that combined the Gaia-derived phase curves with external physical parameters
@@ -150,7 +150,7 @@ Section~\ref{sec:conclusions} summarizes the conclusions.
 \label{sec:gaia}
 
 The primary input is the Gaia DR3 \texttt{sso\_observation} table
-\citep{galluccio2022}, downloaded as a single 823\,MB Parquet file
+\citep{galluccio2023}, downloaded as a single 823\,MB Parquet file
 containing multi-epoch sparse photometry for solar system objects detected
 by \gaia between 2014 and 2017.  The table provides integrated $G$-band
 fluxes, observation times, and geometric parameters including heliocentric
@@ -195,7 +195,7 @@ summarizes the datasets, references, and match statistics.
 \toprule
 Dataset & Reference & $n_\mathrm{matched}$ & Fraction (\%) & Columns added \\
 \midrule
-Gaia DR3 SSO        & \citet{galluccio2022}   & 128\,885 & 100.0 & $H$, $G$, $\sigma_G$, $n_\mathrm{obs}$, phase\_range \\
+Gaia DR3 SSO        & \citet{galluccio2023}   & 128\,885 & 100.0 & $H$, $G$, $\sigma_G$, $n_\mathrm{obs}$, phase\_range \\
 NEOWISE             & \citet{masiero2017}     &  45\,747 &  35.5 & $D_\mathrm{km}$, $p_V$, $\eta$ \\
 LCDB                & \citet{warner2009}      &  25\,788 &  20.0 & rot\_period\_best \\
 Bus-DeMeo / PDS     & \citet{demeo2009}       &   1\,728 &   1.3 & taxonomy (spectroscopic) \\
@@ -400,16 +400,16 @@ sampled by visible and near-infrared photometry.  Phase curves and
 reflectance spectra are therefore orthogonal observables, providing
 complementary rather than redundant surface information.
 
-\begin{figure}
+\begin{figure*}
 \centering
-\includegraphics[width=\columnwidth]{48_gapc_gasp_crossmatch.pdf}
+\includegraphics[width=\textwidth]{48_gapc_gasp_crossmatch.pdf}
 \caption{Random forest prediction of $G$ from Gaia 16-band reflectance
          spectra ($n = 9\,748$).  The predicted values (x-axis) show no
          correlation with the measured values (y-axis) beyond taxonomy
          and size, with $R^2 = -0.028$.  Residuals are symmetric and
          centered on zero.}
 \label{fig:rfpred}
-\end{figure}
+\end{figure*}
 
 \subsection{Binary asteroid \texorpdfstring{$G$}{G}-excess}
 \label{sec:binary}
@@ -425,16 +425,16 @@ from the elongated primaries common among contact-binary and rubble-pile
 systems.  The \gapc DAMIT flag identifies 10,182 objects with shape models,
 providing a future route to disentangling these contributions.
 
-\begin{figure}
+\begin{figure*}
 \centering
-\includegraphics[width=\columnwidth]{gapc_fig4_binary.pdf}
+\includegraphics[width=\textwidth]{gapc_fig4_binary.pdf}
 \caption{Distribution of $G$ for known binary asteroids (Pravec catalog,
          $n = 384$, red) versus size-matched non-binary objects (grey).
          Vertical dashed lines mark the medians.  The binary population
          shows a statistically significant $G$ excess ($p = 2.2 \times
          10^{-11}$, Mann-Whitney $U$ test).}
 \label{fig:binary}
-\end{figure}
+\end{figure*}
 
 \subsection{Taxonomy-dependent \texorpdfstring{$G$}{G}}
 \label{sec:taxonomy_g}
